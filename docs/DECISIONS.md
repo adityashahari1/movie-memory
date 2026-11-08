@@ -101,9 +101,56 @@ Reason:
 Commit history should communicate completed work without artificial
 commits made only to match the plan's stage count.
 
-## Live Package Verification — 2026-11-07
+## D008 — Node.js Runtime
 
 Status:
+Accepted. Node 24.x is the project runtime, as explicitly requested.
+
+Decision:
+Pin Node.js 24.22.2 in .nvmrc and require Node 24.x in package.json.
+Use @types/node 24.19.2 so TypeScript declarations match the runtime
+family. Keep npm 11.19.1, which is compatible with Node 24.
+
+Reason:
+Keep development, dependency installation, and build verification on
+the intended Node 24 release family. This supersedes the Node 26
+runtime recorded during the initial package verification below.
+
+Prisma work remains deferred until DATABASE_URL is configured.
+
+## D009 — Prisma 7 Persistence Setup
+
+Decision:
+Use matching Prisma CLI, Client, and PostgreSQL adapter versions 7.10.1.
+Use ESM, the prisma-client generator, and an explicit ignored output path
+at generated/prisma. Keep the connection URL in the ignored .env file;
+prisma.config.ts loads it for CLI commands.
+
+Use explicit .ts imports in the generated client and enable TypeScript
+extension imports so Node 24 can run a temporary connectivity check
+without another TypeScript runner dependency. Next.js bundles the same
+generated TypeScript for server code.
+
+Use a server-only PrismaPg-backed client, cached through globalThis during
+development to avoid unnecessary clients during hot reloads.
+
+Create only User, Account, Session, and MovieFact application models.
+VerificationToken is for email magic links and is unnecessary for the
+planned Google-only authentication. Prisma's internal migration tracking
+table is required tooling, not an additional application model.
+
+MovieFact.generatedAt uses millisecond-precision timestamptz. Its
+userId/movie/generatedAt-descending index supports the later cache lookup;
+no cache behavior or concurrency constraint is implemented in this stage.
+
+Reason:
+Follow the approved model and Prisma 7 conventions without adding
+authentication behavior, unrelated models, or extra infrastructure.
+
+## Initial Package Verification — 2026-11-07
+
+Status:
+Historical pre-scaffold snapshot; D008 defines the current project runtime.
 Read-only checks completed against the public npm registry and official
 documentation. These are candidate pins, not an installed or build-tested
 dependency set. No package installation or application scaffolding was run.
