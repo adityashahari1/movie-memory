@@ -49,6 +49,9 @@ function fixture(overrides: Partial<Dependencies> = {}, initialFacts: StoredFact
   return { dependencies, facts, lookups, generatedFor, inserts };
 }
 
+// Drain queued continuations while explicit dependency gates remain unresolved.
+const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 test("with no previous fact, authenticates, generates for the stored movie, and returns the persisted fact", async () => {
   const { dependencies, lookups, generatedFor, inserts } = fixture();
   const result = await generateFact(dependencies);
@@ -245,3 +248,241 @@ test("immediate sequential requests authenticate again and reuse the newly saved
   assert.equal(facts.length, 1);
   assert.deepEqual(facts[0].generatedAt, NOW);
 });
+
+for (const cache of ["missing", "expired"]) {
+  test(`overlapping ${cache} cache requests share generation and wait for one persisted result`, async (t) => {
+    const generation = Promise.withResolvers<string>();
+    const generationStarted = Promise.withResolvers<void>();
+    const persistence = Promise.withResolvers<void>();
+    const persistenceStarted = Promise.withResolvers<void>();
+    const requests: ReturnType<typeof generateFact>[] = [];
+    let authCalls = 0;
+    let providerCalls = 0;
+    let persistenceCalls = 0;
+    let finished = 0;
+    const { dependencies, lookups, inserts, facts } = fixture({
+      getCurrentUser: async () => { authCalls++; return { id: t.name, favoriteMovie: "The Matrix" }; },
+      generateText: async () => { providerCalls++; generationStarted.resolve(); return generation.promise; },
+    }, cache === "expired" ? [storedFact(60_000, { userId: t.name })] : []);
+    const persist = dependencies.persistFact;
+    dependencies.persistFact = async (data) => {
+      persistenceCalls++;
+      persistenceStarted.resolve();
+      await persistence.promise;
+      return persist(data);
+    };
+    t.after(async () => {
+      generation.resolve("A shared movie fact.");
+      persistence.resolve();
+      await Promise.allSettled(requests);
+    });
+
+    requests.push(generateFact(dependencies).then((result) => { finished++; return result; }));
+    await generationStarted.promise;
+    requests.push(generateFact(dependencies).then((result) => { finished++; return result; }));
+    await nextTurn();
+    assert.equal(authCalls, 2);
+    assert.equal(providerCalls, 1);
+    assert.equal(lookups.length, 1);
+    assert.equal(persistenceCalls, 0);
+    assert.equal(finished, 0);
+
+    // Even during existing work, each caller must pass its own authentication/onboarding checks.
+    assert.equal((await generateFact({ ...dependencies, getCurrentUser: async () => null })).fact, null);
+    assert.equal((await generateFact({ ...dependencies, getCurrentUser: async () => ({ id: t.name, favoriteMovie: null }) })).fact, null);
+
+    generation.resolve("A shared movie fact.");
+    await persistenceStarted.promise;
+    assert.equal(persistenceCalls, 1);
+    assert.equal(finished, 0);
+    persistence.resolve();
+    const [first, second] = await Promise.all(requests);
+
+    assert.strictEqual(first, second);
+    assert.deepEqual(first, {
+      fact: { id: "saved-fact-1", movie: "The Matrix", text: "A shared movie fact.", generatedAt: NOW.toISOString() },
+      error: null,
+    });
+    assert.equal(providerCalls, 1);
+    assert.equal(persistenceCalls, 1);
+    assert.equal(inserts.length, 1);
+    assert.equal(facts.length, cache === "expired" ? 2 : 1);
+    assert.deepEqual(lookups[0], { where: { userId: t.name, movie: "The Matrix" }, orderBy: { generatedAt: "desc" } });
+  });
+}
+
+test("overlapping fresh-cache requests join before the asynchronous cache read and preserve the timestamp", async (t) => {
+  const lookupStarted = Promise.withResolvers<void>();
+  const lookupGate = Promise.withResolvers<void>();
+  const cached = storedFact(59_999, { userId: t.name });
+  const original = structuredClone(cached);
+  const { dependencies, facts, lookups, generatedFor, inserts } = fixture({
+    getCurrentUser: async () => ({ id: t.name, favoriteMovie: "The Matrix" }),
+  }, [cached]);
+  const lookup = dependencies.findLatestFact;
+  let lookupCalls = 0;
+  dependencies.findLatestFact = async (query) => {
+    lookupCalls++;
+    lookupStarted.resolve();
+    await lookupGate.promise;
+    return lookup(query);
+  };
+  const requests: ReturnType<typeof generateFact>[] = [];
+  t.after(async () => { lookupGate.resolve(); await Promise.allSettled(requests); });
+
+  requests.push(generateFact(dependencies));
+  await lookupStarted.promise;
+  requests.push(generateFact(dependencies));
+  await nextTurn();
+  assert.equal(lookupCalls, 1);
+  lookupGate.resolve();
+  const [first, second] = await Promise.all(requests);
+
+  assert.strictEqual(first, second);
+  assert.deepEqual(first, {
+    fact: { id: cached.id, movie: cached.movie, text: cached.text, generatedAt: original.generatedAt.toISOString() },
+    error: null,
+  });
+  assert.equal(lookups.length, 1);
+  assert.equal(generatedFor.length, 0);
+  assert.equal(inserts.length, 0);
+  assert.deepEqual(facts, [original]);
+});
+
+for (const scope of ["different users", "different movies", "ambiguous delimiter tuples"]) {
+  test(`overlapping ${scope} do not share work or ownership`, async (t) => {
+    const firstUser = { id: t.name, favoriteMovie: "The Matrix" };
+    const secondUser = scope === "different users"
+      ? { id: `${t.name}-other`, favoriteMovie: "The Matrix" }
+      : scope === "different movies"
+        ? { id: t.name, favoriteMovie: "Inception" }
+        : { id: `${t.name}|part`, favoriteMovie: "movie" };
+    if (scope === "ambiguous delimiter tuples") firstUser.favoriteMovie = "part|movie";
+    const generationStarted = Promise.withResolvers<void>();
+    const generationGate = Promise.withResolvers<void>();
+    const generatedMovies: string[] = [];
+    const { dependencies, facts, lookups, inserts } = fixture({
+      getCurrentUser: async () => firstUser,
+      generateText: async (movie) => {
+        generatedMovies.push(movie);
+        generationStarted.resolve();
+        await generationGate.promise;
+        return `A fact about ${movie}.`;
+      },
+    }, [
+      storedFact(60_000, { id: "older-first", userId: firstUser.id, movie: firstUser.favoriteMovie }),
+      storedFact(60_000, { id: "older-second", userId: secondUser.id, movie: secondUser.favoriteMovie }),
+    ]);
+    const requests: ReturnType<typeof generateFact>[] = [];
+    t.after(async () => { generationGate.resolve(); await Promise.allSettled(requests); });
+
+    requests.push(generateFact(dependencies));
+    await generationStarted.promise;
+    requests.push(generateFact({ ...dependencies, getCurrentUser: async () => secondUser }));
+    await nextTurn();
+    assert.deepEqual(generatedMovies, [firstUser.favoriteMovie, secondUser.favoriteMovie]);
+    assert.deepEqual(lookups, [firstUser, secondUser].map((user) => ({
+      where: { userId: user.id, movie: user.favoriteMovie }, orderBy: { generatedAt: "desc" },
+    })));
+    generationGate.resolve();
+    const results = await Promise.all(requests);
+
+    assert.equal(inserts.length, 2);
+    assert.notEqual(results[0].fact?.id, results[1].fact?.id);
+    for (const [index, user] of [firstUser, secondUser].entries()) {
+      assert.equal(results[index].error, null);
+      assert.equal(results[index].fact?.movie, user.favoriteMovie);
+      const saved = facts.find((fact) => fact.id === results[index].fact?.id);
+      assert.equal(saved?.userId, user.id);
+      assert.equal(saved?.movie, user.favoriteMovie);
+    }
+  });
+}
+
+test("success cleanup permits a later request to regenerate at expiry", async (t) => {
+  let clock = NOW.getTime();
+  const { dependencies, generatedFor, inserts, lookups } = fixture({
+    getCurrentUser: async () => ({ id: t.name, favoriteMovie: "The Matrix" }),
+    now: () => new Date(clock),
+  });
+  const first = await generateFact(dependencies);
+  clock += 60_000;
+  const second = await generateFact(dependencies);
+
+  assert.equal(first.error, null);
+  assert.equal(second.error, null);
+  assert.notEqual(first.fact?.id, second.fact?.id);
+  assert.equal(generatedFor.length, 2);
+  assert.equal(inserts.length, 2);
+  assert.equal(lookups.length, 2);
+});
+
+for (const failure of ["provider", "persistence", "lookup", "unusable output"]) {
+  test(`overlapping ${failure} failure returns safe errors, cleans up, and permits retry`, async (t) => {
+    const failureStarted = Promise.withResolvers<void>();
+    const failureGate = Promise.withResolvers<void>();
+    let shouldFail = true;
+    let providerCalls = 0;
+    let persistenceCalls = 0;
+    let lookupCalls = 0;
+    const { dependencies, inserts } = fixture({
+      getCurrentUser: async () => ({ id: t.name, favoriteMovie: "The Matrix" }),
+      generateText: async () => {
+        providerCalls++;
+        if (shouldFail && (failure === "provider" || failure === "unusable output")) {
+          failureStarted.resolve();
+          await failureGate.promise;
+          if (failure === "provider") throw new Error("private failure details");
+          return "   ";
+        }
+        return "A successful movie fact.";
+      },
+    });
+    const lookup = dependencies.findLatestFact;
+    dependencies.findLatestFact = async (query) => {
+      lookupCalls++;
+      if (shouldFail && failure === "lookup") {
+        failureStarted.resolve();
+        await failureGate.promise;
+        throw new Error("private failure details");
+      }
+      return lookup(query);
+    };
+    const persist = dependencies.persistFact;
+    dependencies.persistFact = async (data) => {
+      persistenceCalls++;
+      if (shouldFail && failure === "persistence") {
+        failureStarted.resolve();
+        await failureGate.promise;
+        throw new Error("private failure details");
+      }
+      return persist(data);
+    };
+    const requests: ReturnType<typeof generateFact>[] = [];
+    t.after(async () => { failureGate.resolve(); await Promise.allSettled(requests); });
+
+    requests.push(generateFact(dependencies));
+    await failureStarted.promise;
+    requests.push(generateFact(dependencies));
+    await nextTurn();
+    assert.equal(lookupCalls, 1);
+    assert.equal(providerCalls, failure === "lookup" ? 0 : 1);
+    assert.equal(persistenceCalls, failure === "persistence" ? 1 : 0);
+    failureGate.resolve();
+    const [first, second] = await Promise.all(requests);
+
+    assert.deepEqual(first, second);
+    assert.deepEqual(first, { fact: null, error: "We couldn't generate and save a movie fact. Please refresh to try again." });
+    assert.ok(!JSON.stringify(first).includes("private failure details"));
+    assert.equal(inserts.length, 0);
+
+    shouldFail = false;
+    const retried = await generateFact(dependencies);
+    assert.equal(retried.error, null);
+    assert.equal(retried.fact?.text, "A successful movie fact.");
+    assert.equal(lookupCalls, 2);
+    assert.equal(providerCalls, failure === "lookup" ? 1 : 2);
+    assert.equal(persistenceCalls, failure === "persistence" ? 2 : 1);
+    assert.equal(inserts.length, 1);
+  });
+}

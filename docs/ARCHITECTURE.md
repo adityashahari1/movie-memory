@@ -20,7 +20,7 @@ This is a design proposal for **Base Implementation + Variant A (Backend-Focused
 - Postgres for users, authentication records, favorite movies, and generated facts, accessed through Prisma.
 - Server Components for page reads and authorization.
 - Server Actions for onboarding and fact generation.
-- One server-only fact module for cache lookup, concurrency protection, AI invocation, persistence, and fallback. Generation, persistence, and the 60-second cache are implemented through Stage 8; concurrency protection and stale fallback remain deferred.
+- One server-only fact module for cache lookup, concurrency protection, AI invocation, persistence, and fallback. Generation, persistence, the 60-second cache, and shared in-flight work are implemented through Stage 9; stale fallback remains deferred.
 - A shared in-memory promise per user and movie to coordinate overlapping requests.
 
 No separate backend, Redis, queue, repository pattern, or additional client-state library is needed.
@@ -369,16 +369,16 @@ Reject non-string input and values outside these limits on the server. These num
 | Unique constraint per user/window | A constraint on the final insert does not prevent duplicate provider calls. Reservation before generation is needed; fixed windows complicate the age-based cache. | Deceptively medium: reservations and recovery remain necessary. | Shared uniqueness does not automatically serialize generation. | Failed reservations need cleanup or recovery. | Needs boundary/race tests; difficult to justify as the simplest approach here. |
 | Shared in-memory promise | Prevents simultaneous application generation for a key within one process when registration is atomic. | Low: keyed map, shared promise, cleanup. | No coordination across processes or instances. | finally cleans settled work; restart clears memory. | Controlled promises make overlap tests straightforward. The limitation is easy to state. |
 
-**Recommendation:** shared in-memory promise, under the explicit single-process assumption.
+**Implemented in Stage 9:** shared in-memory Promise in lib/facts.ts, under the explicit single-process assumption. The key is `JSON.stringify([authenticated User.id, exact persisted movie])`. This coordinates overlapping requests handled by the same Node process. It does not coordinate separate Node processes, workers, containers, or serverless instances.
 
 Implementation rules:
 
 1. Authenticate each caller before joining shared work.
 2. Build a collision-safe key from server-derived user ID and movie.
-3. Register work before any asynchronous gap can create a duplicate.
+3. Register work synchronously before its deferred Promise continuation starts, including before any cache lookup.
 4. Read the cache inside the shared workflow.
 5. Keep the entry until generation and persistence settle.
-6. Remove it on both success and failure.
+6. Remove it on both success and failure using finally, only if the map still contains that same Promise.
 7. Do not confuse fact lifetime with lock expiration.
 8. Route every fact-generation entry point through the same module.
 
@@ -523,7 +523,7 @@ Follow PLAN -> IMPLEMENT -> RUN -> VERIFY -> REVIEW -> COMMIT as the working dis
 | AI timeout and retries | Gemini SDK timeout 30,000 ms and retryOptions.attempts = 1 (zero retries). |
 | Validation limits | Confirmed project decision: after trimming, minimum length = 1 and maximum length = 200. The PDF itself leaves numbers unspecified. |
 | Time measurement | Proposed decision: UTC timestamp at successful generation completion, measured with the server clock used for freshness checks. |
-| Provider timeout ambiguity | A client timeout cannot prove provider-side work has stopped. The completed design will prevent overlapping application invocations within its runtime; it does not claim exactly-once execution inside the provider after network failures. Concurrency protection is deferred beyond Stage 7. |
+| Provider timeout ambiguity | A client timeout cannot prove provider-side work has stopped. Stage 9 prevents overlapping application generation within one process; it does not claim exactly-once execution inside the provider after network failures or coordination across processes. |
 | Persistence failure after generation | Do not report an unpersisted new fact as successful. Return the previously loaded matching fact if available, otherwise a friendly error. |
 | Test setup budget | Cache and cross-user authorization tests remain required. A separate test database and the full list of suggested additional automated tests are optional. |
 | Fact accuracy | Independent verification is not requested; do not add a movie database or research pipeline. |

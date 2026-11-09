@@ -89,7 +89,7 @@ The server-only validator rejects non-string and empty input, trims surrounding 
 
 Every submission authenticates again. One conditional Prisma update matches the validated application User.id and favoriteMovie being null. This prevents another tab or a repeated request from overwriting the initial choice. Both successful and already-completed submissions go to `/dashboard`; unexpected database errors return a generic friendly message. Route state is refreshed after a successful save.
 
-`npm test` uses Node 24's built-in test runner: nine validator tests and sixteen fact-workflow tests. Fact tests use a controllable clock and a query-filtering fact fixture, stub generation and persistence, make no provider API calls, and need no live database. Onboarding terminal checks also exercised unauthenticated and invalid requests, tampered ownership fields, a canceled test database write, and two overlapping submissions. The test user's movie was temporarily reset between onboarding tests; no User, Account, or MovieFact was created by onboarding.
+`npm test` uses Node 24's built-in test runner: nine validator tests and twenty-seven fact-workflow tests. Fact tests use a controllable clock and a query-filtering fact fixture, stub generation and persistence, make no provider API calls, and need no live database. Onboarding terminal checks also exercised unauthenticated and invalid requests, tampered ownership fields, a canceled test database write, and two overlapping submissions. The test user's movie was temporarily reset between onboarding tests; no User, Account, or MovieFact was created by onboarding.
 
 ## Dashboard
 
@@ -119,7 +119,19 @@ The 25 automated tests cover 59,999 ms reuse, exact 60,000 ms expiry, ordinary f
 
 Stage 8 browser verification passed. The user requested a fact after expiry, then refreshed within 10 seconds; both requests displayed a fact. Read-only database verification found exactly one new row (6 to 7), generated 152.071 seconds after the previous fact. All six earlier rows retained their IDs, movies, text, and generatedAt values. No test timestamps were adjusted, and all legitimate facts were retained.
 
-Concurrency protection and stale fallback remain deferred. Overlapping misses can still generate more than once. If regeneration fails, the existing friendly error is returned even when an expired fact exists. The Gemini integration and provider-deviation policy are unchanged.
+Stage 8 did not coordinate overlapping misses; Stage 9 adds that protection below. Stale fallback remains deferred. If regeneration fails, the existing friendly error is returned even when an expired fact exists. The Gemini integration and provider-deviation policy are unchanged.
+
+## Movie facts — Stage 9 concurrency
+
+After each caller independently authenticates and reads the persisted movie, `lib/facts.ts` joins or registers a private in-memory Promise keyed by `JSON.stringify([userId, movie])`. Tuple serialization avoids ambiguous concatenated keys. The Promise is registered synchronously; its workflow begins in a subsequent Promise continuation, so registration precedes even the cache lookup. The shared operation covers the existing cache check, optional generation, persistence, and safe DTO. Equivalent overlapping callers receive the same persisted result; different users or movies run independently.
+
+An identity-checked `finally` removes only the settling operation's entry on success or failure. Awaited failures preserve the existing safe error, and a later request can retry. No expired fact is returned as fallback. The map holds only in-flight work; Postgres still supplies the 60-second cache, with no timestamp updates or row overwrites.
+
+**Limitation:** This coordinates overlapping requests handled by the same Node process. It does not coordinate separate Node processes, workers, containers, or serverless instances. It is not distributed locking. Development module reloads also reset module memory; use the production server for controlled verification.
+
+The 36 tests include held generation/persistence and cache-read promises to prove actual overlap, independent user/movie scopes, collision-safe keys, and cleanup/retry after failures. Tests use distinct concurrency-test identities and settle pending gates in teardown; no map-inspection/reset API is exposed.
+
+Production terminal verification used an existing valid session cookie only in memory, with normal authentication enabled. An unauthenticated action was denied. Two overlapping authenticated HTTP requests after expiry returned identical fact DTOs and created exactly one row (7 to 8); all seven earlier facts remained unchanged. No timestamps were edited or facts deleted. The deterministic tests directly count provider/persistence calls; the live check verifies returned IDs, timestamps, and database rows without provider instrumentation. Typecheck and production build pass. Browser dashboard/logout regression verification is pending.
 
 ## Database
 
@@ -160,4 +172,4 @@ The type check generates Prisma Client and Next.js route types before running Ty
 
 The scaffold uses the official TailwindCSS Turbopack integration generated by create-next-app 16.4.5. Direct dependency versions are pinned and `package-lock.json` records the resolved installation.
 
-Fact concurrency protection and stale fallback remain deferred.
+Stale fallback remains deferred.

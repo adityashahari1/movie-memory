@@ -186,6 +186,27 @@ References: [Gemini model](https://aistudio.google.com/docs/models/gemini-3.1-fl
 [pricing](https://aistudio.google.com/docs/pricing#gemini-3.1-flash-lite),
 [supported generateContent API](https://ai.google.dev/api/generate-content).
 
+## D011 — Single-Process Fact Coordination
+
+Decision:
+Use a private in-memory Map of in-flight Promises in lib/facts.ts, keyed
+by JSON.stringify([authenticated application User.id, exact persisted movie]).
+Authenticate and resolve persisted state independently for each caller.
+Register the Promise synchronously before its continuation performs the
+cache lookup, generation, and persistence. Equivalent overlapping callers
+await the same operation; different users/movies remain independent.
+
+Remove settled work in finally on success or failure, checking Promise
+identity before deletion. Keep the existing safe error and allow later
+retries. Postgres remains the cache; the 60-second boundary and append-only
+fact behavior are unchanged. Stale fallback is deferred to Stage 10.
+
+Reason and limitation:
+This is the approved simple take-home approach. It coordinates overlapping
+requests handled by the same Node process. It does NOT coordinate separate
+Node processes, workers, containers, or serverless instances. It is not
+distributed locking, and development module reloads reset module memory.
+
 ## Initial Package Verification — 2026-11-07
 
 Status:
