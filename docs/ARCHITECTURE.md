@@ -20,7 +20,7 @@ This is a design proposal for **Base Implementation + Variant A (Backend-Focused
 - Postgres for users, authentication records, favorite movies, and generated facts, accessed through Prisma.
 - Server Components for page reads and authorization.
 - Server Actions for onboarding and fact generation.
-- One server-only fact module for cache lookup, concurrency protection, AI invocation, persistence, and fallback. Only generation and persistence are implemented in Stage 7.
+- One server-only fact module for cache lookup, concurrency protection, AI invocation, persistence, and fallback. Generation, persistence, and the 60-second cache are implemented through Stage 8; concurrency protection and stale fallback remain deferred.
 - A shared in-memory promise per user and movie to coordinate overlapping requests.
 
 No separate backend, Redis, queue, repository pattern, or additional client-state library is needed.

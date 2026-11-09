@@ -89,7 +89,7 @@ The server-only validator rejects non-string and empty input, trims surrounding 
 
 Every submission authenticates again. One conditional Prisma update matches the validated application User.id and favoriteMovie being null. This prevents another tab or a repeated request from overwriting the initial choice. Both successful and already-completed submissions go to `/dashboard`; unexpected database errors return a generic friendly message. Route state is refreshed after a successful save.
 
-`npm test` uses Node 24's built-in test runner: nine validator tests and eight fact-workflow tests. Fact tests stub generation and persistence, make no paid API calls, and need no live database. Onboarding terminal checks also exercised unauthenticated and invalid requests, tampered ownership fields, a canceled test database write, and two overlapping submissions. The test user's movie was temporarily reset between onboarding tests; no User, Account, or MovieFact was created by onboarding.
+`npm test` uses Node 24's built-in test runner: nine validator tests and sixteen fact-workflow tests. Fact tests use a controllable clock and a query-filtering fact fixture, stub generation and persistence, make no provider API calls, and need no live database. Onboarding terminal checks also exercised unauthenticated and invalid requests, tampered ownership fields, a canceled test database write, and two overlapping submissions. The test user's movie was temporarily reset between onboarding tests; no User, Account, or MovieFact was created by onboarding.
 
 ## Dashboard
 
@@ -105,9 +105,21 @@ Create a key in [Google AI Studio](https://aistudio.google.com/apikey) using a F
 
 The small client fact panel requests a fact through a Server Action when mounted. The action independently authenticates, reads the stored movie, generates nonempty text, and awaits MovieFact insertion before returning a safe DTO. The timestamp records successful generation completion. Loading and friendly errors stay within the panel; text uses ordinary React escaping.
 
-Every Stage 7 invocation generates and inserts a new fact. There is no existing-fact lookup, 60-second cache, shared lock, or stale fallback yet. Rendering or prefetching the dashboard does not generate facts. Refreshing the page mounts the panel and requests another fact.
+Before Stage 8, every Stage 7 invocation generated and inserted a new fact. Rendering or prefetching the dashboard does not generate facts. Refreshing the page mounts the panel and requests a fact; Stage 8 adds the cache policy below.
 
 Seventeen automated tests, typecheck, production build, development smoke check, and security checks pass. One authenticated terminal request and one user-confirmed browser visit generated two distinct persisted Gemini facts for the same user and `The Matrix`, with nonempty text and timestamps. Rendering/prefetching and unauthenticated action calls do not create facts. Browser verification uses the production build on port 3000; development mode is smoke-checked separately because React development effects may replay. Both generated facts are retained.
+
+## Movie facts — Stage 8 cache
+
+Every fact request still independently authenticates and reads the user's persisted favorite movie. Before generating, the server queries one MovieFact using `findFirst`, matching the validated application User.id and exact stored movie, ordered by generatedAt descending. The existing composite index supports this lookup; Postgres rows are the cache.
+
+Age is the current server time minus generatedAt in milliseconds. A fact is fresh below 60,000 ms and expired at 60,000 ms or above. A fresh hit returns the original id, movie, text, and timestamp without calling Gemini or writing anything. There is no sliding expiration. An expired or missing fact follows the existing generate, validate, timestamp, persist, and return path; earlier facts remain intact.
+
+The 25 automated tests cover 59,999 ms reuse, exact 60,000 ms expiry, ordinary fresh/expired cases, latest matching lookup, user/movie isolation, sequential reuse, timestamp preservation, and existing safe errors. Time is injected rather than tested with real waits. The query fixture exercises lookup criteria; it does not replace live database/browser verification.
+
+Stage 8 browser verification passed. The user requested a fact after expiry, then refreshed within 10 seconds; both requests displayed a fact. Read-only database verification found exactly one new row (6 to 7), generated 152.071 seconds after the previous fact. All six earlier rows retained their IDs, movies, text, and generatedAt values. No test timestamps were adjusted, and all legitimate facts were retained.
+
+Concurrency protection and stale fallback remain deferred. Overlapping misses can still generate more than once. If regeneration fails, the existing friendly error is returned even when an expired fact exists. The Gemini integration and provider-deviation policy are unchanged.
 
 ## Database
 
@@ -148,4 +160,4 @@ The type check generates Prisma Client and Next.js route types before running Ty
 
 The scaffold uses the official TailwindCSS Turbopack integration generated by create-next-app 16.4.5. Direct dependency versions are pinned and `package-lock.json` records the resolved installation.
 
-Fact caching, fact concurrency protection, and stale fallback remain deferred.
+Fact concurrency protection and stale fallback remain deferred.

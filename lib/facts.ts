@@ -11,8 +11,13 @@ type PersistedMovieFact = NewMovieFact & { id: string };
 
 type FactDependencies = {
   getCurrentUser: () => Promise<{ id: string; favoriteMovie: string | null } | null>;
+  findLatestFact: (query: {
+    where: { userId: string; movie: string };
+    orderBy: { generatedAt: "desc" };
+  }) => Promise<PersistedMovieFact | null>;
   generateText: (movie: string) => Promise<unknown>;
   persistFact: (data: NewMovieFact) => Promise<PersistedMovieFact>;
+  now?: () => Date;
 };
 
 export type FactResult =
@@ -34,18 +39,26 @@ export async function generateFact(dependencies: FactDependencies): Promise<Fact
       return { fact: null, error: "Complete onboarding before generating a movie fact." };
     }
 
-    const output = await dependencies.generateText(user.favoriteMovie);
-
-    if (typeof output !== "string" || output.trim().length === 0) {
-      throw new Error("Unusable movie fact output.");
-    }
-
-    const saved = await dependencies.persistFact({
-      userId: user.id,
-      movie: user.favoriteMovie,
-      text: output.trim(),
-      generatedAt: new Date(),
+    const now = dependencies.now ?? (() => new Date());
+    let saved = await dependencies.findLatestFact({
+      where: { userId: user.id, movie: user.favoriteMovie },
+      orderBy: { generatedAt: "desc" },
     });
+
+    if (!saved || now().getTime() - saved.generatedAt.getTime() >= 60_000) {
+      const output = await dependencies.generateText(user.favoriteMovie);
+
+      if (typeof output !== "string" || output.trim().length === 0) {
+        throw new Error("Unusable movie fact output.");
+      }
+
+      saved = await dependencies.persistFact({
+        userId: user.id,
+        movie: user.favoriteMovie,
+        text: output.trim(),
+        generatedAt: now(),
+      });
+    }
 
     return {
       fact: {

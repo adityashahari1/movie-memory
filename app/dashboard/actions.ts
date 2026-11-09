@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 export async function requestMovieFact(): Promise<FactResult> {
   return generateFact({
     getCurrentUser,
+    findLatestFact: (query) => prisma.movieFact.findFirst(query),
     generateText: generateMovieFact,
     persistFact: (data) => prisma.movieFact.create({ data }),
   });
