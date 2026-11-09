@@ -57,16 +57,18 @@ not prescribe numeric limits.
 ## D005 — Auth.js Version
 
 Status:
-Unresolved until project initialization.
+Selected and installed for Stage 3. Database persistence and authenticated
+HTTP checks pass; browser logout and repeated-login verification are pending.
 
 Decision:
-Select the Auth.js version during initialization after checking its
-compatibility with Next.js, the Prisma adapter, and Prisma. Use the
-documentation and API conventions for the selected release.
+Pin next-auth 5.0.0-beta.32 and @auth/prisma-adapter 2.11.3. Both use
+@auth/core 0.41.3 transitively; do not install @auth/core directly.
+Use Auth.js v5 configuration, handlers, auth(), signIn(), and signOut()
+consistently with Next.js 16 and the existing Prisma 7 client.
 
 Reason:
-Avoid mixing version-specific authentication examples before the
-project's dependency versions have been established.
+Match the current v5 documentation and compatible package peer ranges,
+without mixing in v4 APIs or adding another authentication library.
 
 ## D006 — Test Scope and Budget
 

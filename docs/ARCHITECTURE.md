@@ -13,7 +13,7 @@ This is a design proposal for **Base Implementation + Variant A (Backend-Focused
 **Recommendation:** one Next.js App Router application running in a single Node.js process, using:
 
 - TypeScript, React, and TailwindCSS for the interface.
-- NextAuth/Auth.js with Google OAuth and the Prisma adapter. The Auth.js version remains unresolved until project initialization.
+- NextAuth/Auth.js with Google OAuth and the Prisma adapter. Stage 3 selected next-auth 5.0.0-beta.32 with @auth/prisma-adapter 2.11.3; see D005 in DECISIONS.md.
 - Database-backed sessions.
 - Postgres for users, authentication records, favorite movies, and generated facts, accessed through Prisma.
 - Server Components for page reads and authorization.
@@ -324,7 +324,7 @@ Recommendations remain proposed unless recorded as confirmed in DECISIONS.md.
 | Decision | Recommended approach and why it fits | Reasonable alternative and why it is not selected | Correctness/security implications | What to explain in an interview |
 |---|---|---|---|---|
 | Application structure | One App Router application, organized by route, with a few server-only modules. This keeps the whole flow visible. | Separate frontend/backend or layered services: more interfaces and setup without additional requirements. | Business operations still need explicit authorization boundaries. | The application is small enough that actions and focused functions are sufficient. |
-| Authentication | NextAuth/Auth.js Google provider with Prisma adapter. Delegate OAuth protocol handling and account persistence. Select the version at project initialization. | Hand-written Google OAuth: fewer dependencies, but substantially more security-sensitive work. | Preserve callback validation and default safe account-linking behavior; use APIs matching the selected release. | Authentication protocol details are delegated; application authorization remains explicit. |
+| Authentication | NextAuth/Auth.js v5 Google provider with Prisma adapter. Delegate OAuth protocol handling and account persistence. Exact selected versions are recorded in D005. | Hand-written Google OAuth: fewer dependencies, but substantially more security-sensitive work. | Preserve callback validation and default safe account-linking behavior; use APIs matching the selected release. | Authentication protocol details are delegated; application authorization remains explicit. |
 | Session identity | Database sessions; expose the application User.id through the server-side session representation. | JWT sessions: valid alternative, but unnecessary when meaningful operations already need Postgres. | Resolve ownership from the validated session, never an email or submitted user ID. | Google identity, application identity, and session credentials have different roles. |
 | Onboarding | favoriteMovie being null means onboarding is incomplete. Use an atomic conditional write. | Separate completion flag: permits contradictory states and needs synchronization. | An existing OAuth account may still need onboarding. Two submissions must not overwrite the first saved movie. | Account creation and onboarding completion are separate events. |
 | Favorite-movie model | Nullable string on User; facts retain their title snapshot. | Movie and user/movie join models: no catalog, shared metadata, or multiple favorites are requested. | Cache lookup uses both user identity and title. | Normalization follows the domain actually required. |
@@ -490,7 +490,7 @@ docs/
 README.md
 ```
 
-Keep the shared-promise registry inside lib/facts.ts. Framework/auth wiring will follow the release selected at initialization; this tree does not select an Auth.js version or freeze version-specific APIs.
+Keep the shared-promise registry inside lib/facts.ts. Framework/auth wiring follows the Auth.js v5 release recorded in D005; lib/auth.ts is the central configuration.
 
 ## 8. Implementation dependency order
 
@@ -516,7 +516,7 @@ Follow PLAN -> IMPLEMENT -> RUN -> VERIFY -> REVIEW -> COMMIT as the working dis
 | Item | Status and treatment |
 |---|---|
 | Single-process deployment | Assumption to confirm before deployment. A single-process Node run fits; multiple workers/serverless instances need database-backed coordination. |
-| Auth.js version | Unresolved until project initialization. Check official installation/adapter guidance, select a compatible Next.js/Auth.js/adapter/Prisma combination, and use examples matching that release. No specific Auth.js version or prerelease tag is selected here. |
+| Auth.js version | Selected in Stage 3: next-auth 5.0.0-beta.32 and @auth/prisma-adapter 2.11.3, using consistent v5 APIs with Next.js 16 and Prisma 7. The release is a beta. Real login persistence and authenticated HTTP checks pass; browser logout and repeated-login verification remain pending. |
 | OpenAI model | Select one available text-capable model and configure it server-side; no model-routing abstraction. |
 | OpenAI timeout and retries | Use an explicit interactive request timeout and set maxRetries explicitly. Initial preference: maxRetries = 0. Choose/document the exact timeout during implementation. |
 | Validation limits | Confirmed project decision: after trimming, minimum length = 1 and maximum length = 200. The PDF itself leaves numbers unspecified. |
