@@ -4,6 +4,8 @@
 
 This is a design proposal for **Base Implementation + Variant A (Backend-Focused)**. The assignment PDF and [REQUIREMENTS.md](REQUIREMENTS.md) are the requirements sources. [DECISIONS.md](DECISIONS.md) records confirmed project decisions and deferred choices.
 
+**User-directed provider deviation:** Stage 7 uses Gemini instead of the assignment's required OpenAI integration to use a free tier. The original OpenAI requirement remains in REQUIREMENTS.md and is not satisfied by this substitution without assignment-owner acceptance. D010 records the current provider and SDK.
+
 | Label | Meaning |
 |---|---|
 | Requirement | Stated in the assignment or REQUIREMENTS.md. |
@@ -18,7 +20,7 @@ This is a design proposal for **Base Implementation + Variant A (Backend-Focused
 - Postgres for users, authentication records, favorite movies, and generated facts, accessed through Prisma.
 - Server Components for page reads and authorization.
 - Server Actions for onboarding and fact generation.
-- One server-only fact module for cache lookup, concurrency protection, OpenAI invocation, persistence, and fallback.
+- One server-only fact module for cache lookup, concurrency protection, AI invocation, persistence, and fallback. Only generation and persistence are implemented in Stage 7.
 - A shared in-memory promise per user and movie to coordinate overlapping requests.
 
 No separate backend, Redis, queue, repository pattern, or additional client-state library is needed.
@@ -144,7 +146,7 @@ Read latest matching fact from Postgres
 age < 60 seconds?
     |
     +-- yes --> return cached fact
-                no OpenAI call
+                no provider call
                 no new fact record
 ```
 
@@ -163,7 +165,7 @@ Read latest matching fact
 No fact OR age >= 60 seconds
     |
     v
-Call OpenAI
+Call Gemini (user-directed provider override)
     |
     v
 Validate completed, nonempty text
@@ -214,10 +216,10 @@ Remove entry when the shared work settles
 
 Registration must happen synchronously before asynchronous work can allow another request to create a second entry.
 
-### OpenAI failure
+### AI provider failure
 
 ```text
-OpenAI timeout/error/unusable response
+Provider timeout/error/unusable response
     |
     v
 Was there a matching stored fact?
@@ -332,22 +334,22 @@ Recommendations remain proposed unless recorded as confirmed in DECISIONS.md.
 | Server/client boundaries | Server-render profile/movie data. Small client forms/panels handle submission, loading, and errors. | Full client application with typed REST wrapper and state library: mainly Variant B work. | Client state is presentation state, never proof of identity or cache freshness. | The browser handles interaction; the server owns authorization and generation policy. |
 | Fact request interface | One authenticated Server Action, invoked when the fact panel mounts. No ownership arguments. | Generation during page rendering: fewer client lines, but adds writes and paid calls to rendering. | Reauthenticate inside the action. POST origin protections supplement authorization. | Effects stay out of rendering without adding an API-client layer. |
 | Cache policy | Latest fact for current user/movie; fresh at age < 60s and expired at age >= 60s. | Framework revalidation or global movie cache: obscures per-user ownership and exact age behavior. | Reuse never changes generatedAt; expired facts remain eligible for failure fallback. | Cache age is measured from generation, not last access. |
-| OpenAI integration | Official SDK, one non-streaming Responses request, and short plain-text output. Use an explicit timeout suitable for an interactive request and set maxRetries explicitly. Initial preference: maxRetries = 0. Select and document the timeout during implementation. | Raw HTTP or streaming: more response/error handling without a requirement benefit. | Send only the movie title; validate completed, nonempty output; keep credentials and provider errors server-side. | Explicit request options make latency, retry behavior, and failure handling explainable. |
+| AI integration | User-directed Gemini override: official Google GenAI SDK, one supported non-streaming generateContent request, and short plain-text output. Timeout 30,000 ms; retryOptions.attempts = 1. | Raw HTTP or streaming: more response/error handling without a requirement benefit. | Send only the movie title; validate normally completed, nonempty output; keep credentials and provider errors server-side. | Explain the explicit OpenAI requirement deviation and bounded request/retry settings. |
 | Failure handling | Return matching stale data when available; otherwise a friendly error. Keep profile/movie/logout usable. | Fail the entire dashboard: discards useful functionality despite an isolated upstream failure. | Do not persist an error as a fact or refresh the stale fact's timestamp. | Failure fallback is separate from normal freshness. |
 | Movie validation | Require a string and trim it. After trimming: minimum length = 1; maximum length = 200. Preserve internal spacing and case. | Validation library or title catalog: unnecessary for this single field. | All writes use the server validator. Client limits are convenience. Numeric limits are a project decision. | The assignment requires limits but leaves their values open. |
-| Testing | Vitest with fake time/OpenAI for deterministic backend cases. A separate Postgres integration-test database is optional if inexpensive to set up. | Making database integration or full browser automation mandatory: setup can consume the three-hour budget without being required by the assignment. | Exercise the fact action and ownership-scoped query behavior; do not stub the authorization result itself. | Required coverage is cache behavior and preventing cross-user fact access; broader automation is selected by value and time. |
+| Testing | Focused backend tests with fake time/provider stubs for deterministic cases. The current suite uses Node 24's built-in runner. A separate Postgres integration-test database is optional if inexpensive to set up. | Making database integration or full browser automation mandatory: setup can consume the three-hour budget without being required by the assignment. | Exercise the fact action and ownership-scoped query behavior; do not stub the authorization result itself. | Required coverage is cache behavior and preventing cross-user fact access; broader automation is selected by value and time. |
 
-### OpenAI request policy
+### AI request policy
 
-Use an explicit request timeout suitable for an interactive request and set `maxRetries` explicitly.
+Use an explicit request timeout suitable for an interactive request and configure retry behavior explicitly.
 
-**Initial implementation preference:** `maxRetries = 0`.
+**Current Gemini implementation:** `httpOptions.timeout = 30_000` milliseconds and `httpOptions.retryOptions.attempts = 1` (one total attempt, zero retries).
 
-The exact timeout will be selected during implementation and documented. It must fit the request budget of the chosen runtime. Use SDK timeout handling rather than a timer that leaves an unmanaged request running.
+The SDK timeout bounds one interactive text request in the local Node runtime. It uses SDK timeout handling rather than a timer that leaves an unmanaged request running. D010 records the selected SDK and model.
 
 The integration remains minimal: send only the movie title, request one short plain-text fact, validate the result, and persist it in Postgres. Keep the title separate from instructions and render output using normal React escaping.
 
-The SDK exposes timeout and retry options. These settings are implementation choices rather than assignment requirements. [Official OpenAI SDK documentation](https://developers.openai.com/api/reference/typescript)
+These settings are implementation choices rather than assignment requirements. See D003/D010 and the installed Google GenAI SDK's HttpOptions/HttpRetryOptions types.
 
 ### Movie validation policy
 
@@ -362,9 +364,9 @@ Reject non-string input and values outside these limits on the server. These num
 
 | Permitted approach | Correctness | Complexity | Multi-instance behavior | Failure recovery | Testability and explainability |
 |---|---|---|---|---|---|
-| DB transaction guard | Sound when a real lock is acquired before generation and the cache is checked again under it. A transaction alone is insufficient. | Medium: lock selection, transaction duration, timeouts, waiting requests. | Coordinates instances sharing Postgres. | Rollback/connection termination releases transactional locks. | Needs database concurrency tests. Clear guarantee, but explain holding a connection while awaiting OpenAI. |
+| DB transaction guard | Sound when a real lock is acquired before generation and the cache is checked again under it. A transaction alone is insufficient. | Medium: lock selection, transaction duration, timeouts, waiting requests. | Coordinates instances sharing Postgres. | Rollback/connection termination releases transactional locks. | Needs database concurrency tests. Clear guarantee, but explain holding a connection while awaiting the AI provider. |
 | Generation-in-progress flag | Acquisition requires an atomic conditional update. A read-then-write boolean can race. | Medium: ownership, clearing, crash recovery. | Can coordinate through the database. | A bare flag can remain stuck after a crash. Leases add expiry and ownership complications. | Test races and abandoned work. More state transitions to explain. |
-| Unique constraint per user/window | A constraint on the final insert does not prevent duplicate OpenAI calls. Reservation before generation is needed; fixed windows complicate the age-based cache. | Deceptively medium: reservations and recovery remain necessary. | Shared uniqueness does not automatically serialize generation. | Failed reservations need cleanup or recovery. | Needs boundary/race tests; difficult to justify as the simplest approach here. |
+| Unique constraint per user/window | A constraint on the final insert does not prevent duplicate provider calls. Reservation before generation is needed; fixed windows complicate the age-based cache. | Deceptively medium: reservations and recovery remain necessary. | Shared uniqueness does not automatically serialize generation. | Failed reservations need cleanup or recovery. | Needs boundary/race tests; difficult to justify as the simplest approach here. |
 | Shared in-memory promise | Prevents simultaneous application generation for a key within one process when registration is atomic. | Low: keyed map, shared promise, cleanup. | No coordination across processes or instances. | finally cleans settled work; restart clears memory. | Controlled promises make overlap tests straightforward. The limitation is easy to state. |
 
 **Recommendation:** shared in-memory promise, under the explicit single-process assumption.
@@ -394,13 +396,13 @@ If deployment requires multiple workers or serverless instances, change this rec
 | Application to database | Scope fact reads to current user/movie and onboarding writes to the current user. |
 | Shared memory to users | Include user identity in the work key. Users with the same movie must not share results. |
 | Server to client | Return display fields and safe results/errors only; never full account records or session credentials. |
-| Server to OpenAI | Keep credentials server-only; send the movie title without user name, email, session, or database credentials. |
+| Server to Gemini | Keep credentials server-only; send the movie title without user name, email, session, or database credentials. |
 | Generated text to UI | Render plain text through React escaping; do not treat it as trusted HTML. |
 | Authentication to logout | Use library-managed logout; subsequent protected requests must fail authentication. |
 
 Additional proposed decisions:
 
-- Keep database/OpenAI modules server-only.
+- Keep database/AI modules server-only.
 - Request only the Google identity/profile/email scopes needed for login.
 - Preserve library-managed cookie and OAuth protections.
 - Keep authenticated content out of shared public caches.
@@ -415,7 +417,7 @@ Server Actions remain public request boundaries. Their POST/origin protections s
 
 | Requirement | Proposed verification |
 |---|---|
-| A07: 60-second cache logic | Fresh fact is reused without OpenAI or insertion. Expired fact triggers generation, persistence, and return of the stored result. Include the accepted project boundary: 59.999s returns cached; 60.000s is expired. Use fake time rather than waiting. |
+| A07: 60-second cache logic | Fresh fact is reused without a provider call or insertion. Expired fact triggers generation, persistence, and return of the stored result. Include the accepted project boundary: 59.999s returns cached; 60.000s is expired. Use fake time rather than waiting. |
 | A08: authorization | With facts belonging to two user fixtures, authenticated user A cannot receive user B's facts, including when both have the same movie title. Exercise the application entry point and verify ownership-scoped querying. |
 
 ### Recommended additional automated checks
@@ -425,14 +427,14 @@ These are suggestions rather than an additional mandatory test suite. Prioritize
 | Area | Suggested cases |
 |---|---|
 | Empty cache | Generate and persist the first fact. |
-| Concurrency | Overlap requests while a controlled OpenAI promise is pending; assert one invocation and one new fact record. |
+| Concurrency | Overlap requests while a controlled provider promise is pending; assert one invocation and one new fact record. |
 | Concurrency isolation | Different users with the same title do not join the same work. |
 | Failure fallback | Timeout/error returns matching stale data without changing its timestamp. |
 | Failure without fallback | Friendly error; no fact inserted. |
 | Cleanup | After a failed attempt settles, a later request can attempt generation again. |
 | Validation | Non-string, whitespace-only, trimmed valid input, and values at and beyond the chosen limits. |
 
-**Decision:** a separate Postgres test database is optional. Use it if setup is quick; otherwise keep the required tests at the application boundary with mocked session identity/OpenAI and a focused Prisma test double. Include facts for both users, check that queries use the authenticated user's ID and movie, and ensure the test would fail if the ownership filter were removed. A stub that simply returns a preselected authorized result is insufficient. No production repository abstraction is needed for this test setup.
+**Decision:** a separate Postgres test database is optional. Use it if setup is quick; otherwise keep the required tests at the application boundary with mocked session identity/AI provider and a focused Prisma test double. Include facts for both users, check that queries use the authenticated user's ID and movie, and ensure the test would fail if the ownership filter were removed. A stub that simply returns a preselected authorized result is insufficient. No production repository abstraction is needed for this test setup.
 
 Manually verify cross-user isolation against the running application and its actual database as well. Document the limits of mocked database coverage if no integration test is included.
 
@@ -467,7 +469,7 @@ lib/
 |-- prisma.ts                        # Shared Prisma client
 |-- movie.ts                         # Movie validation
 |-- facts.ts                         # Cache, shared work, persistence
-|-- openai.ts                        # Bounded generation request
+|-- gemini.ts                        # Bounded generation request; user override
 
 prisma/
 |-- schema.prisma                    # Created during implementation
@@ -496,11 +498,11 @@ Keep the shared-promise registry inside lib/facts.ts. Framework/auth wiring foll
 
 | Order | Work | Completion condition |
 |---|---|---|
-| 1 | Resolve compatible package versions and external configuration. | Select Auth.js version at initialization; confirm compatible adapter/Next.js/Prisma, Postgres connection, Google callback, and OpenAI access. |
+| 1 | Resolve compatible package versions and external configuration. | Select Auth.js version at initialization; confirm compatible adapter/Next.js/Prisma, Postgres connection, Google callback, and AI provider access. |
 | 2 | Establish Prisma models and migrations. | Authentication records, favorite movie, and facts can be persisted. |
 | 3 | Implement Google login, sessions, current-user lookup, and logout. | Server reliably determines application identity. |
 | 4 | Implement routing and onboarding. | Validation, conditional persistence, first-time/returning/interrupted paths work. |
-| 5 | Implement the server-only fact workflow. | Cache, boundary, shared work, OpenAI, persistence, and fallback operate together. Select/document the explicit timeout and retry setting. |
+| 5 | Implement the server-only fact workflow. | Cache, boundary, shared work, AI invocation, persistence, and fallback operate together. Select/document the explicit timeout and retry setting. |
 | 6 | Connect dashboard and fact panel. | Required content and fact/error states display correctly. |
 | 7 | Add backend tests and complete manual verification. | Required cache/authorization tests pass; remaining required behaviors are verified manually or with selected extra tests. |
 | 8 | Complete submission documentation. | Setup, environment, migrations, concise architecture overview, variant rationale, tradeoffs, improvements, and AI note are documented. |
@@ -517,11 +519,11 @@ Follow PLAN -> IMPLEMENT -> RUN -> VERIFY -> REVIEW -> COMMIT as the working dis
 |---|---|
 | Single-process deployment | Assumption to confirm before deployment. A single-process Node run fits; multiple workers/serverless instances need database-backed coordination. |
 | Auth.js version | Selected in Stage 3: next-auth 5.0.0-beta.32 and @auth/prisma-adapter 2.11.3, using consistent v5 APIs with Next.js 16 and Prisma 7. The release is a beta. Real login persistence and authenticated HTTP checks pass; browser logout and repeated-login verification remain pending. |
-| OpenAI model | Select one available text-capable model and configure it server-side; no model-routing abstraction. |
-| OpenAI timeout and retries | Use an explicit interactive request timeout and set maxRetries explicitly. Initial preference: maxRetries = 0. Choose/document the exact timeout during implementation. |
+| AI model | User-directed Gemini override: gemini-3.1-flash-lite, configured server-side with minimal thinking and a 300-token output cap. See D010. Free Tier eligibility/quotas depend on the project. No model-routing abstraction. |
+| AI timeout and retries | Gemini SDK timeout 30,000 ms and retryOptions.attempts = 1 (zero retries). |
 | Validation limits | Confirmed project decision: after trimming, minimum length = 1 and maximum length = 200. The PDF itself leaves numbers unspecified. |
 | Time measurement | Proposed decision: UTC timestamp at successful generation completion, measured with the server clock used for freshness checks. |
-| Provider timeout ambiguity | A client timeout cannot prove OpenAI-side work has stopped. The design prevents overlapping application invocations within its runtime; it does not claim exactly-once execution inside OpenAI after network failures. |
+| Provider timeout ambiguity | A client timeout cannot prove provider-side work has stopped. The completed design will prevent overlapping application invocations within its runtime; it does not claim exactly-once execution inside the provider after network failures. Concurrency protection is deferred beyond Stage 7. |
 | Persistence failure after generation | Do not report an unpersisted new fact as successful. Return the previously loaded matching fact if available, otherwise a friendly error. |
 | Test setup budget | Cache and cross-user authorization tests remain required. A separate test database and the full list of suggested additional automated tests are optional. |
 | Fact accuracy | Independent verification is not requested; do not add a movie database or research pipeline. |

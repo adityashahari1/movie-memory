@@ -2,6 +2,8 @@
 
 Source: SWE Take-Home Exercise (Full-Stack) PDF. All seven pages were reviewed.
 
+**Implementation deviation (user-directed):** Stage 7 now uses Gemini instead of OpenAI to use an available free tier. The original OpenAI requirements below remain unchanged; this provider substitution does not satisfy the assignment's specified OpenAI integration unless the assignment owner accepts the deviation.
+
 This covers the confirmed **Base + Variant A + general requirements** scope. Variant B is an alternative, so its features are excluded. No architecture or application code is proposed below.
 
 ## 1. Requirements matrix

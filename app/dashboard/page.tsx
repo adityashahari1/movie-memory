@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { getCurrentUser } from "@/lib/current-user";
 import { logout } from "../actions";
+import { FactPanel } from "./fact-panel";
 
 export default async function Dashboard() {
   const user = await getCurrentUser();
@@ -51,6 +52,8 @@ export default async function Dashboard() {
         </h2>
         <p className="break-words">{user.favoriteMovie}</p>
       </section>
+
+      <FactPanel />
 
       <form action={logout}>
         <button

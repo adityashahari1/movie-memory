@@ -12,10 +12,11 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "typecheck": "prisma generate && next typegen && tsc --noEmit",
-    "test": "node --conditions=react-server --test lib/movie.test.ts"
+    "test": "node --conditions=react-server --test lib/movie.test.ts lib/facts.test.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "2.11.3",
+    "@google/genai": "3.0.0",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
     "dotenv": "18.0.9",
@@ -38,6 +39,7 @@
   },
   "allowScripts": {
     "prisma@7.10.1": true,
-    "@prisma/engines@7.10.1": true
+    "@prisma/engines@7.10.1": true,
+    "protobufjs@7.6.6": false
   }
 }

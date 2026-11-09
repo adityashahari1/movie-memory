@@ -25,21 +25,26 @@ Reason:
 This produces an explicit and deterministic interpretation of the
 otherwise unspecified equality boundary.
 
-## D003 — OpenAI Request Options
+## D003 — AI Request Options
 
 Decision:
 Use an explicit request timeout suitable for an interactive request
-and set maxRetries explicitly.
+and disable automatic retries explicitly.
 
-Initial implementation preference:
-maxRetries = 0
+Stage 7 implementation:
+Gemini SDK httpOptions.timeout = 30,000 milliseconds
+Gemini SDK httpOptions.retryOptions.attempts = 1
 
-The exact timeout will be selected during implementation and documented.
+The Gemini SDK counts the initial request as an attempt, so one total
+attempt means zero automatic retries. This preserves the original
+maxRetries = 0 policy when changing providers.
 
 Reason:
 Make request duration and retry behavior deliberate while keeping the
-OpenAI integration minimal. Send only the movie title and keep the
-application's required fact persistence in Postgres.
+AI integration minimal. Send only the movie title and keep the
+application's required fact persistence in Postgres. The 30-second limit
+fits one short generation in the local Node runtime without the SDK's
+long default timeout.
 
 ## D004 — Movie Validation Limits
 
@@ -78,7 +83,7 @@ cross-user fact access. Keep the accepted 59.999s/60.000s boundary cases.
 
 A separate Postgres authorization integration-test database is optional.
 Use it if setup is quick; otherwise exercise the application boundary
-with mocked session/OpenAI dependencies and verify ownership-scoped
+with mocked session/AI-provider dependencies and verify ownership-scoped
 Prisma queries using two users' fact fixtures. The test must detect a
 missing ownership filter, rather than stubbing an authorized outcome.
 Also check isolation manually against the running application/database.
@@ -148,6 +153,38 @@ no cache behavior or concurrency constraint is implemented in this stage.
 Reason:
 Follow the approved model and Prisma 7 conventions without adding
 authentication behavior, unrelated models, or extra infrastructure.
+
+## D010 — Gemini SDK and Movie Fact Model
+
+Decision:
+At the user's explicit request, replace OpenAI with Gemini. Pin the
+official @google/genai package to 3.0.0, verified as the stable npm release
+and compatible with Node 24. Use the supported non-streaming
+models.generateContent API with gemini-3.1-flash-lite, minimal thinking,
+one candidate, and maxOutputTokens = 300. Keep the model identifier and
+GEMINI_API_KEY server-side; use the Gemini Developer API, not Vertex AI.
+
+Reason:
+The user requested a provider with a free tier rather than funding OpenAI
+credits. Google's current pricing lists free-tier input and output for
+this stable lightweight model, subject to project eligibility and quotas.
+Use a key from a Free Tier project; no billing setup is performed. The
+configured key can access the model; live generation is verified separately.
+
+Requirement impact:
+The assignment explicitly requires OpenAI. Gemini is a documented
+implementation deviation, not a claim that the OpenAI requirement is met.
+The assignment owner would need to accept this substitution for compliance.
+
+Send fixed application instructions separately from a JSON-encoded movie
+title. No Google profile, application user ID, or session data is sent.
+Accept only one normally completed candidate with nonempty text. Persist each Stage 7 generation
+before returning a safe fact DTO; there is no fact lookup, cache, lock,
+or stale fallback in this stage.
+
+References: [Gemini model](https://aistudio.google.com/docs/models/gemini-3.1-flash-lite),
+[pricing](https://aistudio.google.com/docs/pricing#gemini-3.1-flash-lite),
+[supported generateContent API](https://ai.google.dev/api/generate-content).
 
 ## Initial Package Verification — 2026-11-07
 

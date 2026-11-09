@@ -1,6 +1,8 @@
 # Movie Memory
 
-Foundation: Next.js App Router, TypeScript, React, TailwindCSS, npm, Prisma 7 with PostgreSQL, and Auth.js v5 Google authentication.
+Foundation: Next.js App Router, TypeScript, React, TailwindCSS, npm, Prisma 7 with PostgreSQL, Auth.js v5 Google authentication, and the official Google GenAI SDK.
+
+**Provider deviation:** The assignment requires OpenAI. At the user's explicit request, this implementation uses Gemini's Free Tier instead. This does not meet the specified OpenAI integration unless the assignment owner accepts the substitution; REQUIREMENTS.md preserves the original requirements.
 
 ## Prerequisites
 
@@ -87,7 +89,7 @@ The server-only validator rejects non-string and empty input, trims surrounding 
 
 Every submission authenticates again. One conditional Prisma update matches the validated application User.id and favoriteMovie being null. This prevents another tab or a repeated request from overwriting the initial choice. Both successful and already-completed submissions go to `/dashboard`; unexpected database errors return a generic friendly message. Route state is refreshed after a successful save.
 
-`npm test` runs nine focused validator tests using Node 24's built-in test runner, with no additional test dependency. Live terminal checks also exercised unauthenticated and invalid requests, tampered ownership fields, a canceled test database write, and two overlapping submissions. The test user's movie was temporarily reset between write tests; no User, Account, or MovieFact was created by onboarding.
+`npm test` uses Node 24's built-in test runner: nine validator tests and eight fact-workflow tests. Fact tests stub generation and persistence, make no paid API calls, and need no live database. Onboarding terminal checks also exercised unauthenticated and invalid requests, tampered ownership fields, a canceled test database write, and two overlapping submissions. The test user's movie was temporarily reset between onboarding tests; no User, Account, or MovieFact was created by onboarding.
 
 ## Dashboard
 
@@ -97,6 +99,16 @@ A missing name displays `Signed-in user`; a missing photo is omitted. The option
 
 Stage 6 terminal checks passed for normal fields, repeated requests, missing name/photo/email, incomplete onboarding, query-parameter tampering, and unauthenticated access. Temporary edits affected only the test user; the original name, email, image, and `The Matrix` were restored. Logout invalidation and Google sign-in initiation also passed. The user confirmed the browser fields/photo, refresh, logout, protected-route redirect, and re-login. Final database verification confirms the same User and Google Account, one active Session, the original profile with `The Matrix`, and zero MovieFacts.
 
+## Movie facts — Stage 7
+
+Create a key in [Google AI Studio](https://aistudio.google.com/apikey) using a Free Tier project. Set GEMINI_API_KEY only in the ignored `.env`; `.env.example` contains an empty placeholder. The server-only integration uses @google/genai 3.0.0 and the supported non-streaming generateContent API with gemini-3.1-flash-lite. D003/D010 record the 30-second timeout, one total attempt (no retries), minimal thinking, and 300-token output cap. Fixed system instructions are separate from the JSON-encoded movie title; Google profile and session data are not sent. Free-tier access depends on project eligibility and quotas; no billing configuration is changed.
+
+The small client fact panel requests a fact through a Server Action when mounted. The action independently authenticates, reads the stored movie, generates nonempty text, and awaits MovieFact insertion before returning a safe DTO. The timestamp records successful generation completion. Loading and friendly errors stay within the panel; text uses ordinary React escaping.
+
+Every Stage 7 invocation generates and inserts a new fact. There is no existing-fact lookup, 60-second cache, shared lock, or stale fallback yet. Rendering or prefetching the dashboard does not generate facts. Refreshing the page mounts the panel and requests another fact.
+
+Seventeen automated tests, typecheck, production build, development smoke check, and security checks pass. One authenticated terminal request and one user-confirmed browser visit generated two distinct persisted Gemini facts for the same user and `The Matrix`, with nonempty text and timestamps. Rendering/prefetching and unauthenticated action calls do not create facts. Browser verification uses the production build on port 3000; development mode is smoke-checked separately because React development effects may replay. Both generated facts are retained.
+
 ## Database
 
 - Prisma CLI, Client, and PostgreSQL adapter are pinned to 7.10.1. Avoid an unqualified Prisma `latest` install, which may select a different major.
@@ -104,7 +116,7 @@ Stage 6 terminal checks passed for normal fields, repeated requests, missing nam
 - Prisma also manages its internal `_prisma_migrations` bookkeeping table.
 - The `prisma-client` generator writes ESM TypeScript to the ignored `generated/prisma/` directory. Development, type-check, and build commands regenerate it automatically.
 - The reusable client in `lib/prisma.ts` uses `PrismaPg`, is marked server-only, and reuses its client during development hot reloads.
-- npm's install-script approvals are restricted to the pinned Prisma CLI and engine packages in `package.json`.
+- npm's install-script approvals are restricted to the pinned Prisma CLI and engine packages in `package.json`. The transitive protobufjs compatibility-warning script is explicitly disabled; it is not required at runtime.
 
 When changing the schema, create a migration for review before applying it:
 
@@ -136,4 +148,4 @@ The type check generates Prisma Client and Next.js route types before running Ty
 
 The scaffold uses the official TailwindCSS Turbopack integration generated by create-next-app 16.4.5. Direct dependency versions are pinned and `package-lock.json` records the resolved installation.
 
-OpenAI integration, fact generation, fact caching, and fact concurrency logic remain deferred. The OpenAI package is not installed.
+Fact caching, fact concurrency protection, and stale fallback remain deferred.
