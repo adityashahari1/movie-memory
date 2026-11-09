@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { getCurrentUser } from "@/lib/current-user";
 import { logout } from "../actions";
+import { MovieForm } from "./movie-form";
 
 export default async function Onboarding() {
   const user = await getCurrentUser();
@@ -17,6 +18,7 @@ export default async function Onboarding() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-8">
       <h1 className="text-2xl font-semibold">Onboarding</h1>
+      <MovieForm />
       <form action={logout}>
         <button
           type="submit"

@@ -34,7 +34,7 @@ Use `http://localhost:3000` for local authentication so the origin matches the r
 
 ## Google authentication
 
-Auth.js v5 (`next-auth` 5.0.0-beta.32) and `@auth/prisma-adapter` 2.11.3 use the existing Prisma client and database sessions. Only Google is enabled. The root page shows the sign-in control when logged out and routes authenticated users according to their persisted favoriteMovie. Onboarding and dashboard currently contain only protected placeholders with Logout.
+Auth.js v5 (`next-auth` 5.0.0-beta.32) and `@auth/prisma-adapter` 2.11.3 use the existing Prisma client and database sessions. Only Google is enabled. The root page shows the sign-in control when logged out and routes authenticated users according to their persisted favoriteMovie. Onboarding saves the initial movie; the dashboard remains a protected placeholder. Both provide Logout.
 
 Configure these names in the ignored `.env` file, never with a `NEXT_PUBLIC_` prefix:
 
@@ -62,12 +62,12 @@ Compilation alone does not verify OAuth. After credentials are configured:
 1. Run `npm run dev` and open http://localhost:3000.
 2. Choose **Sign in with Google** and complete the real Google round trip.
 3. Verify User, Google Account, and Session records; compare User.id with authenticated `/api/auth/session`.
-4. Verify favoriteMovie remains null and no MovieFact records were created.
+4. Submit `   The Matrix   ` during first-time onboarding; verify favoriteMovie is stored as `The Matrix` and no MovieFact records were created.
 5. Choose Logout; verify the page is unauthenticated and that session no longer exists.
-6. Sign in again with the same Google account; verify the same application User.id is reused and no duplicate user/account is created.
+6. Sign in again with the same Google account; verify the same application User.id is reused, no duplicate user/account is created, and the saved movie routes the user to `/dashboard`.
 7. Inspect authenticated `/api/auth/session` JSON and browser assets for exposed credentials or raw session/provider tokens.
 
-Stage 3 was confirmed complete before routing implementation. Stage 4 terminal checks verified the existing Logout server action, session deletion, rejection of the old session, and Google sign-in initiation. A fresh browser Google round trip and browser navigation/logout checks remain pending for Stage 4.
+Stages 3 and 4 were confirmed complete before onboarding implementation. Stage 5 terminal checks pass. The user confirmed browser validation, submission of the padded movie title, refresh, logout, and returning login; database verification confirms the same user has `The Matrix` saved and no facts were created.
 
 ## Authentication and onboarding routing
 
@@ -76,10 +76,18 @@ Every page uses the existing server-only getCurrentUser() helper. The validated 
 | State | `/` | `/onboarding` | `/dashboard` |
 |---|---|---|---|
 | Logged out | Landing | Redirect `/` | Redirect `/` |
-| Signed in, favoriteMovie null | Redirect `/onboarding` | Onboarding placeholder | Redirect `/onboarding` |
+| Signed in, favoriteMovie null | Redirect `/onboarding` | Movie form | Redirect `/onboarding` |
 | Signed in, favoriteMovie present | Redirect `/dashboard` | Redirect `/dashboard` | Dashboard placeholder |
 
-All nine cases passed terminal HTTP checks against the production build, including repeated direct requests and redirect-chain checks. Verification temporarily set the test user's favoriteMovie to `Stage 4 routing verification` and restored it to null in a finally block. No onboarding submission is implemented.
+All nine routing cases passed in Stage 4. Stage 5 checks confirm that a successful save redirects to `/dashboard` and subsequent visits to `/` or `/onboarding` redirect there.
+
+## Onboarding
+
+The server-only validator rejects non-string and empty input, trims surrounding whitespace, and enforces a length of 1-200. Case and internal whitespace are preserved; no movie catalog is queried. The form displays validation errors and disables its submit button with `Saving...` feedback while pending.
+
+Every submission authenticates again. One conditional Prisma update matches the validated application User.id and favoriteMovie being null. This prevents another tab or a repeated request from overwriting the initial choice. Both successful and already-completed submissions go to `/dashboard`; unexpected database errors return a generic friendly message. Route state is refreshed after a successful save.
+
+`npm test` runs nine focused validator tests using Node 24's built-in test runner, with no additional test dependency. Live terminal checks also exercised unauthenticated and invalid requests, tampered ownership fields, a canceled test database write, and two overlapping submissions. The test user's movie was temporarily reset between write tests; no User, Account, or MovieFact was created by onboarding.
 
 ## Database
 
@@ -103,6 +111,7 @@ Inspect the generated SQL, then apply reviewed migrations with `npx --no-install
 ## Verification
 
 ```sh
+npm test
 npm run typecheck
 npm run build
 npm run start
@@ -119,4 +128,4 @@ The type check generates Prisma Client and Next.js route types before running Ty
 
 The scaffold uses the official TailwindCSS Turbopack integration generated by create-next-app 16.4.5. Direct dependency versions are pinned and `package-lock.json` records the resolved installation.
 
-The onboarding form, movie submission, dashboard content, OpenAI integration, caching, and concurrency logic remain deferred. The OpenAI package is not installed.
+Dashboard content, OpenAI integration, fact generation, fact caching, and fact concurrency logic remain deferred. The OpenAI package is not installed.
