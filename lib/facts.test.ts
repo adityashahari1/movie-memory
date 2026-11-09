@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { generateFact } from "./facts.ts";
+import { generateFact, MovieFactProviderError } from "./facts.ts";
 
 type Dependencies = Parameters<typeof generateFact>[0];
 type NewFact = Parameters<Dependencies["persistFact"]>[0];
@@ -213,8 +213,8 @@ test("users without a saved movie cannot look up, generate, or persist facts", a
   assert.equal(inserts.length, 0);
 });
 
-test("provider exceptions return a safe error, even with an expired fact (no stale fallback yet)", async () => {
-  const { dependencies, inserts } = fixture({ generateText: async () => { throw new Error("private provider details"); } }, [storedFact(60_000)]);
+test("provider request failures without a stored fact return a safe error", async () => {
+  const { dependencies, inserts } = fixture({ generateText: async () => { throw new MovieFactProviderError("private provider details"); } });
   const result = await generateFact(dependencies);
   assert.equal(result.fact, null);
   assert.ok(result.error);
@@ -432,7 +432,7 @@ for (const failure of ["provider", "persistence", "lookup", "unusable output"]) 
         if (shouldFail && (failure === "provider" || failure === "unusable output")) {
           failureStarted.resolve();
           await failureGate.promise;
-          if (failure === "provider") throw new Error("private failure details");
+          if (failure === "provider") throw new MovieFactProviderError("private failure details");
           return "   ";
         }
         return "A successful movie fact.";
@@ -486,3 +486,141 @@ for (const failure of ["provider", "persistence", "lookup", "unusable output"]) 
     assert.equal(inserts.length, 1);
   });
 }
+
+for (const failure of ["timeout", "network/API error"]) {
+  test(`provider ${failure} returns the unchanged stale fact and allows another attempt at the same time`, async (t) => {
+    const stale = storedFact(60_000, { userId: t.name });
+    const original = structuredClone(stale);
+    let providerCalls = 0;
+    const { dependencies, facts, inserts } = fixture({
+      getCurrentUser: async () => ({ id: t.name, favoriteMovie: "The Matrix" }),
+      generateText: async () => { providerCalls++; throw new MovieFactProviderError(`private ${failure} details`); },
+    }, [stale]);
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await generateFact(dependencies);
+      assert.deepEqual(result, {
+        fact: { id: original.id, movie: original.movie, text: original.text, generatedAt: original.generatedAt.toISOString() },
+        error: null,
+      });
+      assert.equal(inserts.length, 0);
+      assert.deepEqual(facts, [original]);
+      assert.equal(NOW.getTime() - facts[0].generatedAt.getTime(), 60_000);
+    }
+    assert.equal(providerCalls, 2);
+  });
+}
+
+test("fallback selects the latest matching fact from mixed user/movie history", async () => {
+  const latest = storedFact(90_000, { id: "latest-matching" });
+  const { dependencies, lookups, inserts } = fixture({
+    generateText: async () => { throw new MovieFactProviderError("private request failure"); },
+  }, [
+    storedFact(120_000, { id: "older-matching" }),
+    latest,
+    storedFact(60_000, { id: "other-user", userId: "user-b" }),
+    storedFact(60_000, { id: "other-movie", movie: "Inception" }),
+  ]);
+
+  assert.deepEqual(await generateFact(dependencies), {
+    fact: { id: latest.id, movie: latest.movie, text: latest.text, generatedAt: latest.generatedAt.toISOString() },
+    error: null,
+  });
+  assert.deepEqual(lookups, [{ where: { userId: "user-a", movie: "The Matrix" }, orderBy: { generatedAt: "desc" } }]);
+  assert.equal(inserts.length, 0);
+});
+
+for (const scope of ["another user", "another movie"]) {
+  test(`a provider failure cannot use a stale fact belonging to ${scope}`, async (t) => {
+    const user = { id: `${t.name}-current`, favoriteMovie: "The Matrix" };
+    const foreign = storedFact(60_000, {
+      userId: scope === "another user" ? `${t.name}-other` : user.id,
+      movie: scope === "another movie" ? "Inception" : user.favoriteMovie,
+    });
+    const original = structuredClone(foreign);
+    let providerCalls = 0;
+    const { dependencies, facts, lookups, inserts } = fixture({
+      getCurrentUser: async () => user,
+      generateText: async () => { providerCalls++; throw new MovieFactProviderError("private request failure"); },
+    }, [foreign]);
+
+    assert.deepEqual(await generateFact(dependencies), {
+      fact: null,
+      error: "We couldn't generate and save a movie fact. Please refresh to try again.",
+    });
+    assert.deepEqual(lookups, [{ where: { userId: user.id, movie: user.favoriteMovie }, orderBy: { generatedAt: "desc" } }]);
+    assert.equal(providerCalls, 1);
+    assert.equal(inserts.length, 0);
+    assert.deepEqual(facts, [original]);
+  });
+}
+
+for (const failure of ["persistence", "unusable output", "unclassified exception"]) {
+  test(`${failure} remains a safe error even when a stale fact exists`, async (t) => {
+    const stale = storedFact(60_000, { userId: t.name });
+    const original = structuredClone(stale);
+    const { dependencies, facts, inserts } = fixture({
+      getCurrentUser: async () => ({ id: t.name, favoriteMovie: "The Matrix" }),
+      ...(failure === "persistence" ? { persistFact: async () => { throw new Error("private database details"); } } : {}),
+      ...(failure === "unusable output" ? { generateText: async () => "   " } : {}),
+      ...(failure === "unclassified exception" ? { generateText: async () => { throw new Error("private internal details"); } } : {}),
+    }, [stale]);
+
+    assert.deepEqual(await generateFact(dependencies), {
+      fact: null,
+      error: "We couldn't generate and save a movie fact. Please refresh to try again.",
+    });
+    assert.equal(inserts.length, 0);
+    assert.deepEqual(facts, [original]);
+  });
+}
+
+test("overlapping provider failures share one stale fallback, clean up, and later regenerate", async (t) => {
+  const started = Promise.withResolvers<void>();
+  const providerGate = Promise.withResolvers<unknown>();
+  const stale = storedFact(60_000, { userId: t.name });
+  const original = structuredClone(stale);
+  let providerCalls = 0;
+  const { dependencies, facts, lookups, inserts } = fixture({
+    getCurrentUser: async () => ({ id: t.name, favoriteMovie: "The Matrix" }),
+    generateText: async () => {
+      providerCalls++;
+      if (providerCalls === 1) { started.resolve(); return providerGate.promise; }
+      return "A recovered provider fact.";
+    },
+  }, [stale]);
+  const requests: ReturnType<typeof generateFact>[] = [];
+  t.after(async () => {
+    providerGate.reject(new MovieFactProviderError("private request failure"));
+    await Promise.allSettled(requests);
+  });
+
+  requests.push(generateFact(dependencies));
+  await started.promise;
+  requests.push(generateFact(dependencies));
+  await nextTurn();
+  assert.equal(providerCalls, 1);
+  assert.equal(lookups.length, 1);
+  assert.equal(inserts.length, 0);
+  providerGate.reject(new MovieFactProviderError("private request failure"));
+  const [first, second] = await Promise.all(requests);
+
+  assert.strictEqual(first, second);
+  assert.deepEqual(first, {
+    fact: { id: original.id, movie: original.movie, text: original.text, generatedAt: original.generatedAt.toISOString() },
+    error: null,
+  });
+  assert.equal(inserts.length, 0);
+  assert.deepEqual(facts, [original]);
+
+  const retried = await generateFact(dependencies);
+  assert.equal(providerCalls, 2);
+  assert.equal(lookups.length, 2);
+  assert.equal(inserts.length, 1);
+  assert.equal(facts.length, 2);
+  assert.deepEqual(facts[0], original);
+  assert.deepEqual(retried, {
+    fact: { id: "saved-fact-1", movie: "The Matrix", text: "A recovered provider fact.", generatedAt: NOW.toISOString() },
+    error: null,
+  });
+});

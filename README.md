@@ -89,7 +89,7 @@ The server-only validator rejects non-string and empty input, trims surrounding 
 
 Every submission authenticates again. One conditional Prisma update matches the validated application User.id and favoriteMovie being null. This prevents another tab or a repeated request from overwriting the initial choice. Both successful and already-completed submissions go to `/dashboard`; unexpected database errors return a generic friendly message. Route state is refreshed after a successful save.
 
-`npm test` uses Node 24's built-in test runner: nine validator tests and twenty-seven fact-workflow tests. Fact tests use a controllable clock and a query-filtering fact fixture, stub generation and persistence, make no provider API calls, and need no live database. Onboarding terminal checks also exercised unauthenticated and invalid requests, tampered ownership fields, a canceled test database write, and two overlapping submissions. The test user's movie was temporarily reset between onboarding tests; no User, Account, or MovieFact was created by onboarding.
+`npm test` uses Node 24's built-in test runner: nine validator tests and thirty-six fact-workflow tests. Fact tests use a controllable clock and a query-filtering fact fixture, stub generation and persistence, make no provider API calls, and need no live database. Onboarding terminal checks also exercised unauthenticated and invalid requests, tampered ownership fields, a canceled test database write, and two overlapping submissions. The test user's movie was temporarily reset between onboarding tests; no User, Account, or MovieFact was created by onboarding.
 
 ## Dashboard
 
@@ -119,19 +119,31 @@ The 25 automated tests cover 59,999 ms reuse, exact 60,000 ms expiry, ordinary f
 
 Stage 8 browser verification passed. The user requested a fact after expiry, then refreshed within 10 seconds; both requests displayed a fact. Read-only database verification found exactly one new row (6 to 7), generated 152.071 seconds after the previous fact. All six earlier rows retained their IDs, movies, text, and generatedAt values. No test timestamps were adjusted, and all legitimate facts were retained.
 
-Stage 8 did not coordinate overlapping misses; Stage 9 adds that protection below. Stale fallback remains deferred. If regeneration fails, the existing friendly error is returned even when an expired fact exists. The Gemini integration and provider-deviation policy are unchanged.
+Stage 8 did not coordinate overlapping misses; Stage 9 adds that protection below. Stages 8-9 returned a friendly error on provider failure even when an expired fact existed; Stage 10 adds the scoped fallback below. The Gemini model, request settings, and provider-deviation policy are unchanged.
 
 ## Movie facts — Stage 9 concurrency
 
 After each caller independently authenticates and reads the persisted movie, `lib/facts.ts` joins or registers a private in-memory Promise keyed by `JSON.stringify([userId, movie])`. Tuple serialization avoids ambiguous concatenated keys. The Promise is registered synchronously; its workflow begins in a subsequent Promise continuation, so registration precedes even the cache lookup. The shared operation covers the existing cache check, optional generation, persistence, and safe DTO. Equivalent overlapping callers receive the same persisted result; different users or movies run independently.
 
-An identity-checked `finally` removes only the settling operation's entry on success or failure. Awaited failures preserve the existing safe error, and a later request can retry. No expired fact is returned as fallback. The map holds only in-flight work; Postgres still supplies the 60-second cache, with no timestamp updates or row overwrites.
+An identity-checked `finally` removes only the settling operation's entry on success or failure, and a later request can retry. Stage 10 handles provider fallback inside this shared operation; other failures preserve the existing safe error. The map holds only in-flight work; Postgres still supplies the 60-second cache, with no timestamp updates or row overwrites.
 
 **Limitation:** This coordinates overlapping requests handled by the same Node process. It does not coordinate separate Node processes, workers, containers, or serverless instances. It is not distributed locking. Development module reloads also reset module memory; use the production server for controlled verification.
 
 The 36 tests include held generation/persistence and cache-read promises to prove actual overlap, independent user/movie scopes, collision-safe keys, and cleanup/retry after failures. Tests use distinct concurrency-test identities and settle pending gates in teardown; no map-inspection/reset API is exposed.
 
 Production terminal verification used an existing valid session cookie only in memory, with normal authentication enabled. An unauthenticated action was denied. Two overlapping authenticated HTTP requests after expiry returned identical fact DTOs and created exactly one row (7 to 8); all seven earlier facts remained unchanged. No timestamps were edited or facts deleted. The deterministic tests directly count provider/persistence calls; the live check verifies returned IDs, timestamps, and database rows without provider instrumentation. Typecheck and production build pass. Browser dashboard/logout regression verification is pending.
+
+## Movie facts — Stage 10 provider fallback
+
+Fresh-cache behavior is unchanged: below 60 seconds, return the latest persisted fact for the authenticated User.id and exact stored movie without calling Gemini. At 60 seconds or above, attempt generation. Successful usable output is still persisted before being returned.
+
+If the provider request times out or errors, return the already-loaded latest matching stored fact, even when stale. It keeps its original id, movie, text, and generatedAt; fallback performs no write and does not extend freshness. With no matching fact, return the existing friendly error. Another user's or movie's fact is never eligible. Overlapping equivalent callers still share one attempt and result, and finally cleanup lets a later request try generation again. The single-process limitation above is unchanged.
+
+The server-only `MovieFactProviderError` marks rejections at the Gemini SDK request boundary. Only this error, caught around the provider call, allows fallback. Unusable/empty/incomplete responses, configuration/internal errors, authentication/onboarding errors, and database read/write failures retain safe errors. In particular, a failed insert never reports new text as saved and never becomes stale fallback. This Stage 10 clarification replaces the older architecture's broader proposed handling; see D012. No UI or result-contract changes are needed, and fact text remains ordinary escaped React text.
+
+The 45 tests cover fresh/expired success, provider timeout/error fallback, timestamp preservation and immediate retry, concurrent fallback/no-fallback failures, user/movie isolation, and the preserved non-provider errors. Typecheck, production build, and whitespace checks pass.
+
+Controlled verification used the existing workflow injection seam, normal HTTP session validation, and real Postgres reads. A held simulated timeout produced one provider attempt for two overlapping callers, both returning the same stale DTO. A later request tried again. The fact count stayed 8 to 8, with all stored IDs, movies, text, and timestamps unchanged; no persistence callback ran. This was not a forced live Gemini failure: no Gemini calls, secret changes, timestamp edits, or fact deletions were needed. Production HTTP smoke checks passed (landing 200, logged-out dashboard redirect, signed-in dashboard 200 with movie/logout/fact panel). UI and DTO are unchanged, so an extra browser failure test is unnecessary; this does not claim a new browser logout test was performed.
 
 ## Database
 
@@ -172,4 +184,4 @@ The type check generates Prisma Client and Next.js route types before running Ty
 
 The scaffold uses the official TailwindCSS Turbopack integration generated by create-next-app 16.4.5. Direct dependency versions are pinned and `package-lock.json` records the resolved installation.
 
-Stale fallback remains deferred.
+Provider fallback is implemented; the remaining test/security/audit work is a separate stage.

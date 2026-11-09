@@ -27,6 +27,21 @@ export type FactResult =
     }
   | { fact: null; error: string };
 
+// Only request failures use this type; validation/configuration/database errors do not.
+export class MovieFactProviderError extends Error {}
+
+function factResult(saved: PersistedMovieFact): FactResult {
+  return {
+    fact: {
+      id: saved.id,
+      movie: saved.movie,
+      text: saved.text,
+      generatedAt: saved.generatedAt.toISOString(),
+    },
+    error: null,
+  };
+}
+
 // Coordinates this module's callers in one Node process, not separate instances.
 const inFlight = new Map<string, Promise<FactResult>>();
 
@@ -60,7 +75,13 @@ export async function generateFact(dependencies: FactDependencies): Promise<Fact
       });
 
       if (!saved || now().getTime() - saved.generatedAt.getTime() >= 60_000) {
-        const output = await dependencies.generateText(movie);
+        let output: unknown;
+        try {
+          output = await dependencies.generateText(movie);
+        } catch (error) {
+          if (error instanceof MovieFactProviderError && saved) return factResult(saved);
+          throw error;
+        }
 
         if (typeof output !== "string" || output.trim().length === 0) {
           throw new Error("Unusable movie fact output.");
@@ -74,15 +95,7 @@ export async function generateFact(dependencies: FactDependencies): Promise<Fact
         });
       }
 
-      return {
-        fact: {
-          id: saved.id,
-          movie: saved.movie,
-          text: saved.text,
-          generatedAt: saved.generatedAt.toISOString(),
-        },
-        error: null,
-      };
+      return factResult(saved);
     }).finally(() => {
       if (inFlight.get(key) === pending) inFlight.delete(key);
     });

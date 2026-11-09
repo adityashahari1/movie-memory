@@ -199,13 +199,39 @@ await the same operation; different users/movies remain independent.
 Remove settled work in finally on success or failure, checking Promise
 identity before deletion. Keep the existing safe error and allow later
 retries. Postgres remains the cache; the 60-second boundary and append-only
-fact behavior are unchanged. Stale fallback is deferred to Stage 10.
+fact behavior are unchanged. Stage 10 provider fallback is recorded in D012.
 
 Reason and limitation:
 This is the approved simple take-home approach. It coordinates overlapping
 requests handled by the same Node process. It does NOT coordinate separate
 Node processes, workers, containers, or serverless instances. It is not
 distributed locking, and development module reloads reset module memory.
+
+## D012 — Provider Failure Fallback Boundary
+
+Requirement and Stage 10 clarification:
+For provider request timeout/error, return the latest stored fact for the
+authenticated application User.id and exact persisted movie when available;
+otherwise retain the friendly error. Fresh facts still bypass the provider.
+Fallback preserves id/movie/text/generatedAt, inserts nothing, remains stale,
+and allows a later regeneration attempt. Overlapping equivalent callers
+share the attempt and result under D011's unchanged single-process limit.
+
+Decision:
+Mark only Gemini SDK request rejections with MovieFactProviderError, a small
+server-only error type shared by the workflow and provider adapter. Catch
+that type only around generation. Keep output validation and persistence
+outside that catch. Use the existing safe DTO, without UI status additions.
+
+Reason and scope:
+The older architecture diagram included unusable output in fallback, and
+its risk table suggested fallback after failed persistence. Stage 10 narrows
+this: unusable/empty/incomplete output, configuration/internal errors,
+authentication/onboarding errors, and database read/write failures retain
+the existing safe error. These are not provider request failures, and the
+PDF does not explicitly require hiding them with stale data. A failed save
+never reports generated text as persisted. Gemini remains the user-directed
+deviation from the assignment's OpenAI requirement.
 
 ## Initial Package Verification — 2026-11-07
 

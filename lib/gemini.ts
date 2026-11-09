@@ -2,6 +2,8 @@ import "server-only";
 
 import { ApiError, FinishReason, GoogleGenAI, ThinkingLevel } from "@google/genai";
 
+import { MovieFactProviderError } from "./facts.ts";
+
 export async function generateMovieFact(movie: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
 
@@ -31,7 +33,7 @@ export async function generateMovieFact(movie: string): Promise<string> {
     console.error("Gemini movie fact request failed.", {
       status: error instanceof ApiError ? error.status : "unknown",
     });
-    throw new Error("Gemini movie fact generation failed.");
+    throw new MovieFactProviderError("Gemini movie fact generation failed.");
   });
 
   const text = response.text?.trim();

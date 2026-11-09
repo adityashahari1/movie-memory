@@ -20,7 +20,7 @@ This is a design proposal for **Base Implementation + Variant A (Backend-Focused
 - Postgres for users, authentication records, favorite movies, and generated facts, accessed through Prisma.
 - Server Components for page reads and authorization.
 - Server Actions for onboarding and fact generation.
-- One server-only fact module for cache lookup, concurrency protection, AI invocation, persistence, and fallback. Generation, persistence, the 60-second cache, and shared in-flight work are implemented through Stage 9; stale fallback remains deferred.
+- One server-only fact module for cache lookup, concurrency protection, AI invocation, persistence, and fallback. These are implemented through Stage 10, with fallback limited to provider request timeout/error; see D012.
 - A shared in-memory promise per user and movie to coordinate overlapping requests.
 
 No separate backend, Redis, queue, repository pattern, or additional client-state library is needed.
@@ -219,7 +219,7 @@ Registration must happen synchronously before asynchronous work can allow anothe
 ### AI provider failure
 
 ```text
-Provider timeout/error/unusable response
+Provider request timeout/error
     |
     v
 Was there a matching stored fact?
@@ -236,7 +236,9 @@ All waiting requests receive the same outcome
 Remove in-progress entry
 ```
 
-A subsequent request may try generation again. Returning stale data does not renew its cache lifetime.
+A subsequent request may try generation again. Returning stale data does not renew its cache lifetime. Stage 10 returns the latest matching row already loaded inside the shared operation; its id, movie, text, and generatedAt remain unchanged, with no write. No matching row means the existing safe error.
+
+**Stage 10 failure boundary (D012):** only the typed MovieFactProviderError raised by the SDK request rejection permits fallback. Unusable/empty/incomplete output, configuration/internal errors, authentication/onboarding errors, and database read/write failures retain the existing safe error. This clarifies the earlier broader proposal without changing the assignment's provider-timeout/error requirement. The safe fact DTO and escaped-text UI are unchanged.
 
 ## 3. Proposed data model
 
@@ -335,7 +337,7 @@ Recommendations remain proposed unless recorded as confirmed in DECISIONS.md.
 | Fact request interface | One authenticated Server Action, invoked when the fact panel mounts. No ownership arguments. | Generation during page rendering: fewer client lines, but adds writes and paid calls to rendering. | Reauthenticate inside the action. POST origin protections supplement authorization. | Effects stay out of rendering without adding an API-client layer. |
 | Cache policy | Latest fact for current user/movie; fresh at age < 60s and expired at age >= 60s. | Framework revalidation or global movie cache: obscures per-user ownership and exact age behavior. | Reuse never changes generatedAt; expired facts remain eligible for failure fallback. | Cache age is measured from generation, not last access. |
 | AI integration | User-directed Gemini override: official Google GenAI SDK, one supported non-streaming generateContent request, and short plain-text output. Timeout 30,000 ms; retryOptions.attempts = 1. | Raw HTTP or streaming: more response/error handling without a requirement benefit. | Send only the movie title; validate normally completed, nonempty output; keep credentials and provider errors server-side. | Explain the explicit OpenAI requirement deviation and bounded request/retry settings. |
-| Failure handling | Return matching stale data when available; otherwise a friendly error. Keep profile/movie/logout usable. | Fail the entire dashboard: discards useful functionality despite an isolated upstream failure. | Do not persist an error as a fact or refresh the stale fact's timestamp. | Failure fallback is separate from normal freshness. |
+| Failure handling | On provider request timeout/error, return matching stale data when available; otherwise a friendly error. Other failures retain safe errors. Keep profile/movie/logout usable. | Fail the entire dashboard: discards useful functionality despite an isolated upstream failure. | Do not persist an error as a fact or refresh the stale fact's timestamp. | Provider fallback is separate from normal freshness and database write failures. |
 | Movie validation | Require a string and trim it. After trimming: minimum length = 1; maximum length = 200. Preserve internal spacing and case. | Validation library or title catalog: unnecessary for this single field. | All writes use the server validator. Client limits are convenience. Numeric limits are a project decision. | The assignment requires limits but leaves their values open. |
 | Testing | Focused backend tests with fake time/provider stubs for deterministic cases. The current suite uses Node 24's built-in runner. A separate Postgres integration-test database is optional if inexpensive to set up. | Making database integration or full browser automation mandatory: setup can consume the three-hour budget without being required by the assignment. | Exercise the fact action and ownership-scoped query behavior; do not stub the authorization result itself. | Required coverage is cache behavior and preventing cross-user fact access; broader automation is selected by value and time. |
 
@@ -524,7 +526,7 @@ Follow PLAN -> IMPLEMENT -> RUN -> VERIFY -> REVIEW -> COMMIT as the working dis
 | Validation limits | Confirmed project decision: after trimming, minimum length = 1 and maximum length = 200. The PDF itself leaves numbers unspecified. |
 | Time measurement | Proposed decision: UTC timestamp at successful generation completion, measured with the server clock used for freshness checks. |
 | Provider timeout ambiguity | A client timeout cannot prove provider-side work has stopped. Stage 9 prevents overlapping application generation within one process; it does not claim exactly-once execution inside the provider after network failures or coordination across processes. |
-| Persistence failure after generation | Do not report an unpersisted new fact as successful. Return the previously loaded matching fact if available, otherwise a friendly error. |
+| Persistence failure after generation | Do not report an unpersisted new fact as successful. Return the existing safe error, with no stale fallback for a database write failure (Stage 10 clarification, D012). |
 | Test setup budget | Cache and cross-user authorization tests remain required. A separate test database and the full list of suggested additional automated tests are optional. |
 | Fact accuracy | Independent verification is not requested; do not add a movie database or research pipeline. |
 | Documentation length | This detailed design informs implementation; keep the README overview to the required 1-2 pages. |
