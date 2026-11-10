@@ -89,7 +89,9 @@ The server-only validator rejects non-string and empty input, trims surrounding 
 
 Every submission authenticates again. One conditional Prisma update matches the validated application User.id and favoriteMovie being null. This prevents another tab or a repeated request from overwriting the initial choice. Both successful and already-completed submissions go to `/dashboard`; unexpected database errors return a generic friendly message. Route state is refreshed after a successful save.
 
-`npm test` uses Node 24's built-in test runner: nine validator tests and thirty-six fact-workflow tests. Fact tests use a controllable clock and a query-filtering fact fixture, stub generation and persistence, make no provider API calls, and need no live database. Onboarding terminal checks also exercised unauthenticated and invalid requests, tampered ownership fields, a canceled test database write, and two overlapping submissions. The test user's movie was temporarily reset between onboarding tests; no User, Account, or MovieFact was created by onboarding.
+`npm test` uses Node 24's built-in test runner: nine validator tests and thirty-nine fact-workflow tests. Fact tests use a controllable clock and a query-filtering fact fixture, stub generation and persistence, make no provider API calls, and need no live database. Onboarding terminal checks also exercised unauthenticated and invalid requests, tampered ownership fields, a canceled test database write, and two overlapping submissions. The test user's movie was temporarily reset between onboarding tests; no User, Account, or MovieFact was created by onboarding.
+
+Required backend coverage (A07/A08) exercises cache behavior and fact ownership through the real workflow's query criteria and mixed user/movie records. The action forwards these criteria unchanged to Prisma. These are workflow/query-contract tests, not live Prisma or OAuth integration tests; no separate test database is required.
 
 ## Dashboard
 

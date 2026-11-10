@@ -31,7 +31,9 @@ function fixture(overrides: Partial<Dependencies> = {}, initialFacts: StoredFact
     findLatestFact: async (query) => {
       lookups.push(query);
       return facts
-        .filter((fact) => fact.userId === query.where.userId && fact.movie === query.where.movie)
+        // Omitted filters must broaden selection, rather than accidentally deny access.
+        .filter((fact) => (query.where.userId === undefined || fact.userId === query.where.userId)
+          && (query.where.movie === undefined || fact.movie === query.where.movie))
         .sort((a, b) => query.orderBy.generatedAt === "desc"
           ? b.generatedAt.getTime() - a.generatedAt.getTime()
           : a.generatedAt.getTime() - b.generatedAt.getTime())[0] ?? null;
@@ -149,6 +151,52 @@ test("facts belonging to another user or another movie do not fill an empty cach
   assert.equal(inserts.length, 1);
   assert.equal(facts.length, 4);
 });
+
+for (const ownCache of ["fresh", "absent", "stale"]) {
+  test(`required ownership contract: User B's ${ownCache} cache never returns User A's newer same-title fact`, async (t) => {
+    const userB = { id: `${t.name}-b`, email: "user-b@example.test", favoriteMovie: "The Matrix" };
+    const userAFact = storedFact(0, {
+      id: "user-a-private-fact",
+      userId: `${t.name}-a`,
+      text: "User A's fact must not be disclosed to User B.",
+    });
+    const own = storedFact(ownCache === "fresh" ? 10_000 : 90_000, {
+      id: "user-b-latest-matching",
+      userId: userB.id,
+      text: "User B's matching fact.",
+    });
+    const records = [
+      userAFact,
+      storedFact(100, { id: "user-b-other-movie", userId: userB.id, movie: "Inception" }),
+      ...(ownCache === "absent" ? [] : [
+        storedFact(120_000, { id: "user-b-older-matching", userId: userB.id }),
+        own,
+      ]),
+    ];
+    const originals = structuredClone(records);
+    let providerCalls = 0;
+    const { dependencies, facts, lookups, inserts } = fixture({
+      getCurrentUser: async () => userB,
+      generateText: async () => { providerCalls++; throw new MovieFactProviderError("Simulated provider failure."); },
+    }, records);
+
+    const result = await generateFact(dependencies);
+
+    assert.deepEqual(result, ownCache === "absent" ? {
+      fact: null,
+      error: "We couldn't generate and save a movie fact. Please refresh to try again.",
+    } : {
+      fact: { id: own.id, movie: own.movie, text: own.text, generatedAt: own.generatedAt.toISOString() },
+      error: null,
+    });
+    assert.deepEqual(lookups, [{ where: { userId: userB.id, movie: userB.favoriteMovie }, orderBy: { generatedAt: "desc" } }]);
+    assert.equal(providerCalls, ownCache === "fresh" ? 0 : 1);
+    assert.equal(inserts.length, 0);
+    assert.deepEqual(facts, originals);
+    assert.ok(!JSON.stringify(result).includes(userAFact.id));
+    assert.ok(!JSON.stringify(result).includes(userAFact.text));
+  });
+}
 
 test("timestamps new facts after generation completes", async () => {
   let clock = NOW.getTime();

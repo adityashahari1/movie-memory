@@ -442,7 +442,7 @@ Manually verify cross-user isolation against the running application and its act
 
 Manually verify actual Google login, returning-user routing, logout, interrupted/duplicate onboarding, unauthenticated dashboard access, multiple tabs, missing profile fields, and absence of secrets in browser-delivered content.
 
-Tests are proposed; no application code or tests have been implemented.
+**Stage 11 status:** required A07/A08 cache and cross-user coverage is implemented with Node 24 workflow tests, including fresh, missing, and stale user-owned facts among newer foreign facts for the same movie. The fixture applies the actual query criteria; omitted filters broaden selection rather than accidentally denying access. The production action forwards those criteria unchanged to Prisma findFirst. This proves the workflow/query contract without claiming live Prisma/OAuth integration coverage or requiring a separate test database. No production testability abstraction was added.
 
 ## 7. Recommended project/folder structure
 
