@@ -69,7 +69,7 @@ Compilation alone does not verify OAuth. After credentials are configured:
 6. Sign in again with the same Google account; verify the same application User.id is reused, no duplicate user/account is created, and the saved movie routes the user to `/dashboard`.
 7. Inspect authenticated `/api/auth/session` JSON and browser assets for exposed credentials or raw session/provider tokens.
 
-Stages 3 and 4 were confirmed complete before onboarding implementation. Stage 5 terminal checks pass. The user confirmed browser validation, submission of the padded movie title, refresh, logout, and returning login; database verification confirms the same user has `The Matrix` saved and no facts were created.
+Stages 3 and 4 were confirmed complete before onboarding implementation. Stage 5 terminal checks passed. The user confirmed browser validation, submission of the padded movie title, refresh, logout, and returning login; Stage 5 database verification confirmed the same user had `The Matrix` saved and no facts had yet been created. Later fact-generation stages added legitimate MovieFact records.
 
 ## Authentication and onboarding routing
 
@@ -99,7 +99,7 @@ The dashboard is a Server Component. It reuses getCurrentUser() to validate the 
 
 A missing name displays `Signed-in user`; a missing photo is omitted. The optional photo uses a standard HTML image with alt text and fixed dimensions. An unexpectedly missing email displays a profile error and logs a message without personal data. Logout uses the existing Auth.js server action.
 
-Stage 6 terminal checks passed for normal fields, repeated requests, missing name/photo/email, incomplete onboarding, query-parameter tampering, and unauthenticated access. Temporary edits affected only the test user; the original name, email, image, and `The Matrix` were restored. Logout invalidation and Google sign-in initiation also passed. The user confirmed the browser fields/photo, refresh, logout, protected-route redirect, and re-login. Final database verification confirms the same User and Google Account, one active Session, the original profile with `The Matrix`, and zero MovieFacts.
+Stage 6 terminal checks passed for normal fields, repeated requests, missing name/photo/email, incomplete onboarding, query-parameter tampering, and unauthenticated access. Temporary edits affected only the test user; the original name, email, image, and `The Matrix` were restored. Logout invalidation and Google sign-in initiation also passed. The user confirmed the browser fields/photo, refresh, logout, protected-route redirect, and re-login. Stage 6 database verification confirmed the same User and Google Account, one active Session, the original profile with `The Matrix`, and zero MovieFacts at that stage; later fact-generation stages added records.
 
 ## Movie facts — Stage 7
 
@@ -109,7 +109,7 @@ The small client fact panel requests a fact through a Server Action when mounted
 
 Before Stage 8, every Stage 7 invocation generated and inserted a new fact. Rendering or prefetching the dashboard does not generate facts. Refreshing the page mounts the panel and requests a fact; Stage 8 adds the cache policy below.
 
-Seventeen automated tests, typecheck, production build, development smoke check, and security checks pass. One authenticated terminal request and one user-confirmed browser visit generated two distinct persisted Gemini facts for the same user and `The Matrix`, with nonempty text and timestamps. Rendering/prefetching and unauthenticated action calls do not create facts. Browser verification uses the production build on port 3000; development mode is smoke-checked separately because React development effects may replay. Both generated facts are retained.
+Stage 7 verification passed with 17 automated tests, typecheck, production build, development smoke check, and security checks. One authenticated terminal request and one user-confirmed browser visit generated two distinct persisted Gemini facts for the same user and `The Matrix`, with nonempty text and timestamps. Rendering/prefetching and unauthenticated action calls do not create facts. Browser verification used the production build on port 3000; development mode was smoke-checked separately because React development effects may replay. Both generated facts were retained.
 
 ## Movie facts — Stage 8 cache
 
@@ -117,7 +117,7 @@ Every fact request still independently authenticates and reads the user's persis
 
 Age is the current server time minus generatedAt in milliseconds. A fact is fresh below 60,000 ms and expired at 60,000 ms or above. A fresh hit returns the original id, movie, text, and timestamp without calling Gemini or writing anything. There is no sliding expiration. An expired or missing fact follows the existing generate, validate, timestamp, persist, and return path; earlier facts remain intact.
 
-The 25 automated tests cover 59,999 ms reuse, exact 60,000 ms expiry, ordinary fresh/expired cases, latest matching lookup, user/movie isolation, sequential reuse, timestamp preservation, and existing safe errors. Time is injected rather than tested with real waits. The query fixture exercises lookup criteria; it does not replace live database/browser verification.
+Stage 8 verification included 25 automated tests covering 59,999 ms reuse, exact 60,000 ms expiry, ordinary fresh/expired cases, latest matching lookup, user/movie isolation, sequential reuse, timestamp preservation, and existing safe errors. The current suite retains these cases. Time is injected rather than tested with real waits. The query fixture exercises lookup criteria; it does not replace live database/browser verification.
 
 Stage 8 browser verification passed. The user requested a fact after expiry, then refreshed within 10 seconds; both requests displayed a fact. Read-only database verification found exactly one new row (6 to 7), generated 152.071 seconds after the previous fact. All six earlier rows retained their IDs, movies, text, and generatedAt values. No test timestamps were adjusted, and all legitimate facts were retained.
 
@@ -131,9 +131,9 @@ An identity-checked `finally` removes only the settling operation's entry on suc
 
 **Limitation:** This coordinates overlapping requests handled by the same Node process. It does not coordinate separate Node processes, workers, containers, or serverless instances. It is not distributed locking. Development module reloads also reset module memory; use the production server for controlled verification.
 
-The 36 tests include held generation/persistence and cache-read promises to prove actual overlap, independent user/movie scopes, collision-safe keys, and cleanup/retry after failures. Tests use distinct concurrency-test identities and settle pending gates in teardown; no map-inspection/reset API is exposed.
+Stage 9 verification included 36 tests, with held generation/persistence and cache-read promises to prove actual overlap, independent user/movie scopes, collision-safe keys, and cleanup/retry after failures. The current suite retains these cases. Tests use distinct concurrency-test identities and settle pending gates in teardown; no map-inspection/reset API is exposed.
 
-Production terminal verification used an existing valid session cookie only in memory, with normal authentication enabled. An unauthenticated action was denied. Two overlapping authenticated HTTP requests after expiry returned identical fact DTOs and created exactly one row (7 to 8); all seven earlier facts remained unchanged. No timestamps were edited or facts deleted. The deterministic tests directly count provider/persistence calls; the live check verifies returned IDs, timestamps, and database rows without provider instrumentation. Typecheck and production build pass. Browser dashboard/logout regression verification is pending.
+Production terminal verification used an existing valid session cookie only in memory, with normal authentication enabled. An unauthenticated action was denied. Two overlapping authenticated HTTP requests after expiry returned identical fact DTOs and created exactly one row (7 to 8); all seven earlier facts remained unchanged. No timestamps were edited or facts deleted. The deterministic tests directly count provider/persistence calls; the live check verifies returned IDs, timestamps, and database rows without provider instrumentation. Typecheck and production build passed. No separate Stage 9 browser result was recorded; profile/logout/re-login were user-confirmed in Stage 6, and Stage 12 subsequently reviewed routes and session exposure.
 
 ## Movie facts — Stage 10 provider fallback
 
@@ -143,7 +143,7 @@ If the provider request times out or errors, return the already-loaded latest ma
 
 The server-only `MovieFactProviderError` marks rejections at the Gemini SDK request boundary. Only this error, caught around the provider call, allows fallback. Unusable/empty/incomplete responses, configuration/internal errors, authentication/onboarding errors, and database read/write failures retain safe errors. In particular, a failed insert never reports new text as saved and never becomes stale fallback. This Stage 10 clarification replaces the older architecture's broader proposed handling; see D012. No UI or result-contract changes are needed, and fact text remains ordinary escaped React text.
 
-The 45 tests cover fresh/expired success, provider timeout/error fallback, timestamp preservation and immediate retry, concurrent fallback/no-fallback failures, user/movie isolation, and the preserved non-provider errors. Typecheck, production build, and whitespace checks pass.
+Stage 10 verification included 45 tests covering fresh/expired success, provider timeout/error fallback, timestamp preservation and immediate retry, concurrent fallback/no-fallback failures, user/movie isolation, and the preserved non-provider errors. The current suite retains these cases. Typecheck, production build, and whitespace checks passed.
 
 Controlled verification used the existing workflow injection seam, normal HTTP session validation, and real Postgres reads. A held simulated timeout produced one provider attempt for two overlapping callers, both returning the same stale DTO. A later request tried again. The fact count stayed 8 to 8, with all stored IDs, movies, text, and timestamps unchanged; no persistence callback ran. This was not a forced live Gemini failure: no Gemini calls, secret changes, timestamp edits, or fact deletions were needed. Production HTTP smoke checks passed (landing 200, logged-out dashboard redirect, signed-in dashboard 200 with movie/logout/fact panel). UI and DTO are unchanged, so an extra browser failure test is unnecessary; this does not claim a new browser logout test was performed.
 
@@ -186,4 +186,4 @@ The type check generates Prisma Client and Next.js route types before running Ty
 
 The scaffold uses the official TailwindCSS Turbopack integration generated by create-next-app 16.4.5. Direct dependency versions are pinned and `package-lock.json` records the resolved installation.
 
-Provider fallback is implemented; the remaining test/security/audit work is a separate stage.
+Provider fallback, required backend coverage, and the security review are complete. [The requirements audit](docs/REQUIREMENTS_AUDIT.md) records current evidence, the provider deviation, and remaining delivery gaps. The final README/AI-usage delivery pass remains Stage 14 work.

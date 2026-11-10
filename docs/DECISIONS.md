@@ -8,7 +8,8 @@ Variant A — Backend-Focused
 Reason:
 The variant provides an opportunity to demonstrate backend
 correctness, data modeling, caching, concurrency handling,
-authorization, failure handling, and safe OpenAI integration.
+authorization, failure handling, and safe AI integration.
+D010 records the explicit OpenAI-to-Gemini implementation deviation.
 
 Tradeoff:
 The application will intentionally keep client-side state management
@@ -62,8 +63,10 @@ not prescribe numeric limits.
 ## D005 — Auth.js Version
 
 Status:
-Selected and installed for Stage 3. Database persistence and authenticated
-HTTP checks pass; browser logout and repeated-login verification are pending.
+Selected and installed for Stage 3. Google login, database persistence,
+logout, and repeated login were verified across Stages 3-6, including the
+user's Stage 6 browser confirmation. Stage 12 reviewed session exposure
+and the unchanged library-managed logout path without repeating live logout.
 
 Decision:
 Pin next-auth 5.0.0-beta.32 and @auth/prisma-adapter 2.11.3. Both use
@@ -123,7 +126,8 @@ Keep development, dependency installation, and build verification on
 the intended Node 24 release family. This supersedes the Node 26
 runtime recorded during the initial package verification below.
 
-Prisma work remains deferred until DATABASE_URL is configured.
+DATABASE_URL was configured and Prisma/Postgres setup completed in Stage 2;
+D009 records that persistence setup.
 
 ## D009 — Prisma 7 Persistence Setup
 
@@ -147,8 +151,9 @@ planned Google-only authentication. Prisma's internal migration tracking
 table is required tooling, not an additional application model.
 
 MovieFact.generatedAt uses millisecond-precision timestamptz. Its
-userId/movie/generatedAt-descending index supports the later cache lookup;
-no cache behavior or concurrency constraint is implemented in this stage.
+userId/movie/generatedAt-descending index now supports the Stage 8 cache
+lookup. Stage 2 added persistence only; Stage 9 added the in-memory
+coordination described in D011, without a database concurrency constraint.
 
 Reason:
 Follow the approved model and Prisma 7 conventions without adding
@@ -178,9 +183,10 @@ The assignment owner would need to accept this substitution for compliance.
 
 Send fixed application instructions separately from a JSON-encoded movie
 title. No Google profile, application user ID, or session data is sent.
-Accept only one normally completed candidate with nonempty text. Persist each Stage 7 generation
-before returning a safe fact DTO; there is no fact lookup, cache, lock,
-or stale fallback in this stage.
+Accept only one normally completed candidate with nonempty text. Stage 7
+persisted each generation before returning a safe fact DTO. Stages 8-10
+subsequently added the Postgres cache, shared in-flight Promise, and scoped
+provider-failure fallback; see D011/D012.
 
 References: [Gemini model](https://aistudio.google.com/docs/models/gemini-3.1-flash-lite),
 [pricing](https://aistudio.google.com/docs/pricing#gemini-3.1-flash-lite),
@@ -240,7 +246,8 @@ Historical pre-scaffold snapshot; D008 defines the current project runtime.
 Read-only checks completed against the public npm registry and official
 documentation. These are candidate pins, not an installed or build-tested
 dependency set. No package installation or application scaffolding was run.
-D005 remains unresolved until project initialization.
+Auth.js was unresolved at this historical snapshot; D005 records the
+subsequent selection. The candidate table is not the current installed set.
 
 | Package/tool | Verified candidate | Notes |
 |---|---|---|
@@ -261,10 +268,10 @@ Prisma 7 requires its PostgreSQL driver adapter and version-appropriate
 client/configuration setup. This is required database connectivity, not
 additional infrastructure. Do not add Accelerate or a hosted Prisma service.
 
-Declared engines and peers support this candidate combination. Actual
-installation, generation, type checking, and build validation remain part
-of initialization. A PostgreSQL server connection/version has not yet been
-verified.
+At this historical snapshot, engines and peers supported the candidate
+combination, while installation/build and PostgreSQL verification were
+still pending. Initialization was subsequently completed; package.json and
+D005/D008/D009 record the implemented runtime, auth, and persistence choices.
 
 References:
 

@@ -2,17 +2,17 @@
 
 ## 1. Architecture summary
 
-This is a design proposal for **Base Implementation + Variant A (Backend-Focused)**. The assignment PDF and [REQUIREMENTS.md](REQUIREMENTS.md) are the requirements sources. [DECISIONS.md](DECISIONS.md) records confirmed project decisions and deferred choices.
+This records the approved and implemented architecture for **Base Implementation + Variant A (Backend-Focused)**, retaining its original design rationale and alternatives. The assignment PDF and [REQUIREMENTS.md](REQUIREMENTS.md) are the requirements sources. [DECISIONS.md](DECISIONS.md) records confirmed choices; [REQUIREMENTS_AUDIT.md](REQUIREMENTS_AUDIT.md) records current compliance and remaining delivery work.
 
 **User-directed provider deviation:** Stage 7 uses Gemini instead of the assignment's required OpenAI integration to use a free tier. The original OpenAI requirement remains in REQUIREMENTS.md and is not satisfied by this substitution without assignment-owner acceptance. D010 records the current provider and SDK.
 
 | Label | Meaning |
 |---|---|
 | Requirement | Stated in the assignment or REQUIREMENTS.md. |
-| Decision | A project implementation choice. Recommendations below remain proposed unless recorded as confirmed in DECISIONS.md. |
+| Decision | A project implementation choice; confirmed versions and policies are recorded in DECISIONS.md. |
 | Assumption | A condition or interpretation not guaranteed by the assignment. |
 
-**Recommendation:** one Next.js App Router application running in a single Node.js process, using:
+**Implemented approach:** one Next.js App Router application running in a single Node.js process, using:
 
 - TypeScript, React, and TailwindCSS for the interface.
 - NextAuth/Auth.js with Google OAuth and the Prisma adapter. Stage 3 selected next-auth 5.0.0-beta.32 with @auth/prisma-adapter 2.11.3; see D005 in DECISIONS.md.
@@ -25,7 +25,7 @@ This is a design proposal for **Base Implementation + Variant A (Backend-Focused
 
 No separate backend, Redis, queue, repository pattern, or additional client-state library is needed.
 
-**Critical assumption:** one Node.js process/runtime with one shared concurrency registry. The assignment permits an in-memory lock when its limitation is documented. This recommendation does not coordinate separate processes or serverless instances.
+**Critical assumption:** one Node.js process/runtime with one shared concurrency registry. The assignment permits an in-memory lock when its limitation is documented. This implementation does not coordinate separate processes or serverless instances.
 
 The database is the source of cached facts. Memory holds only work currently in progress.
 
@@ -65,7 +65,7 @@ Read authenticated user's favoriteMovie
     +-- present -----> /dashboard
 ```
 
-**Proposed decision:** use `/` as the post-login routing point. Determine onboarding from persisted application data rather than an OAuth new-account indicator.
+**Implemented decision:** use `/` as the post-login routing point. Determine onboarding from persisted application data rather than an OAuth new-account indicator.
 
 ### First-time onboarding
 
@@ -126,7 +126,7 @@ Render name, email, optional photo, movie, Logout
 Small client FactPanel requests fact through a Server Action
 ```
 
-**Proposed decision:** page rendering reads data. Fact generation happens through a POST action after the panel mounts, avoiding paid API calls and writes during rendering or link prefetching. [Next.js data security](https://nextjs.org/docs/app/guides/data-security)
+**Implemented decision:** page rendering reads data. Fact generation happens through a POST action after the panel mounts, avoiding paid API calls and writes during rendering or link prefetching. [Next.js data security](https://nextjs.org/docs/app/guides/data-security)
 
 ### Fact generation with a fresh cache
 
@@ -240,9 +240,9 @@ A subsequent request may try generation again. Returning stale data does not ren
 
 **Stage 10 failure boundary (D012):** only the typed MovieFactProviderError raised by the SDK request rejection permits fallback. Unusable/empty/incomplete output, configuration/internal errors, authentication/onboarding errors, and database read/write failures retain the existing safe error. This clarifies the earlier broader proposal without changing the assignment's provider-timeout/error requirement. The safe fact DTO and escaped-text UI are unchanged.
 
-## 3. Proposed data model
+## 3. Data-model rationale
 
-This is conceptual, not a final Prisma schema.
+This conceptual view explains the implemented models; prisma/schema.prisma contains the actual schema.
 
 ```text
 User
@@ -254,7 +254,7 @@ User
 
 ### User
 
-**Proposed decision:** store the single favorite movie directly on `User`.
+**Implemented decision:** store the single favorite movie directly on `User`.
 
 | Important field | Why it exists | Requirements and constraints |
 |---|---|---|
@@ -271,7 +271,7 @@ A separate `onboardingComplete` flag would duplicate information: a valid saved 
 
 ### Account
 
-**Proposed decision:** let the auth adapter manage the association between Google identity and application identity.
+**Implemented decision:** let the auth adapter manage the association between Google identity and application identity.
 
 | Important field | Why it exists | Relationships and constraints |
 |---|---|---|
@@ -295,11 +295,11 @@ This supports Google login and repeat identification under B01-B03. Use the sele
 
 Supports authenticated access, logout, and dashboard protection.
 
-**Proposed decision:** database sessions. The browser holds an opaque session token in an HttpOnly cookie; logout removes the database session and cookie. Postgres is already required, so this adds no infrastructure. [Auth.js session strategies](https://authjs.dev/concepts/session-strategies)
+**Implemented decision:** database sessions. The browser holds an opaque session token in an HttpOnly cookie; logout removes the database session and cookie. Postgres is already required, so this adds no infrastructure. [Auth.js session strategies](https://authjs.dev/concepts/session-strategies)
 
 ### MovieFact
 
-**Proposed decision:** insert one record for each successfully generated fact.
+**Implemented decision:** insert one record for each successfully generated fact.
 
 | Important field | Why it exists | Requirements and constraints |
 |---|---|---|
@@ -323,7 +323,7 @@ Do not add a unique constraint per fixed time window under the recommended appro
 
 ## 4. Major engineering decisions
 
-Recommendations remain proposed unless recorded as confirmed in DECISIONS.md.
+The choices below describe the implemented approach; alternatives explain its rationale. DECISIONS.md records the selected versions and policies.
 
 | Decision | Recommended approach and why it fits | Reasonable alternative and why it is not selected | Correctness/security implications | What to explain in an interview |
 |---|---|---|---|---|
@@ -386,7 +386,7 @@ Implementation rules:
 
 The alternative is a database transaction guard. It provides broader coordination, but holding a transaction during an external request adds connection and timeout concerns. Prisma recommends keeping transactions short. [Prisma transaction guidance](https://docs.prisma.io/docs/orm/v7/prisma-client/queries/transactions)
 
-If deployment requires multiple workers or serverless instances, change this recommendation before implementation.
+Before deploying across multiple workers or serverless instances, revisit this coordination choice.
 
 ## 5. Security boundaries
 
@@ -402,13 +402,13 @@ If deployment requires multiple workers or serverless instances, change this rec
 | Generated text to UI | Render plain text through React escaping; do not treat it as trusted HTML. |
 | Authentication to logout | Use library-managed logout; subsequent protected requests must fail authentication. |
 
-Additional proposed decisions:
+Implemented security choices:
 
 - Keep database/AI modules server-only.
 - Request only the Google identity/profile/email scopes needed for login.
 - Preserve library-managed cookie and OAuth protections.
 - Keep authenticated content out of shared public caches.
-- Log useful error codes/request identifiers without secrets.
+- Log fixed messages and safe provider status without secrets.
 - Provide a name fallback and omit an unavailable photo.
 
 Server Actions remain public request boundaries. Their POST/origin protections supplement explicit authorization. [Next.js authentication](https://nextjs.org/docs/app/guides/authentication), [Server Action security](https://nextjs.org/docs/app/guides/data-security)
@@ -444,7 +444,7 @@ Manually verify actual Google login, returning-user routing, logout, interrupted
 
 **Stage 11 status:** required A07/A08 cache and cross-user coverage is implemented with Node 24 workflow tests, including fresh, missing, and stale user-owned facts among newer foreign facts for the same movie. The fixture applies the actual query criteria; omitted filters broaden selection rather than accidentally denying access. The production action forwards those criteria unchanged to Prisma findFirst. This proves the workflow/query contract without claiming live Prisma/OAuth integration coverage or requiring a separate test database. No production testability abstraction was added.
 
-## 7. Recommended project/folder structure
+## 7. Implemented project/folder structure (relevant files)
 
 ```text
 app/
@@ -463,24 +463,21 @@ app/
 |-- dashboard/
     |-- page.tsx                     # Authorized profile/movie reads
     |-- actions.ts                   # Authenticated fact request
-    |-- fact-panel.tsx               # Loading, fact, stale/error state
+    |-- fact-panel.tsx               # Loading, fact, safe error display
 
 lib/
 |-- auth.ts                          # Provider, adapter, session config
 |-- current-user.ts                  # Validated current-user lookup
 |-- prisma.ts                        # Shared Prisma client
 |-- movie.ts                         # Movie validation
+|-- movie.test.ts                    # Validator tests
 |-- facts.ts                         # Cache, shared work, persistence
+|-- facts.test.ts                    # Workflow/cache/ownership tests
 |-- gemini.ts                        # Bounded generation request; user override
 
 prisma/
-|-- schema.prisma                    # Created during implementation
+|-- schema.prisma                    # Implemented models
 |-- migrations/
-
-tests/
-|-- facts.test.ts
-|-- authorization.test.ts             # Database integration optional
-|-- movie.test.ts
 
 types/
 |-- next-auth.d.ts                    # Application user ID typing
@@ -489,6 +486,8 @@ docs/
 |-- REQUIREMENTS.md
 |-- DECISIONS.md
 |-- ARCHITECTURE.md
+|-- SECURITY_REVIEW.md
+|-- REQUIREMENTS_AUDIT.md
 
 .env.example
 README.md
@@ -497,6 +496,8 @@ README.md
 Keep the shared-promise registry inside lib/facts.ts. Framework/auth wiring follows the Auth.js v5 release recorded in D005; lib/auth.ts is the central configuration.
 
 ## 8. Implementation dependency order
+
+This is the original dependency order, not a list of still-pending application work. Current evidence and remaining delivery gaps are recorded in REQUIREMENTS_AUDIT.md.
 
 | Order | Work | Completion condition |
 |---|---|---|
@@ -520,14 +521,14 @@ Follow PLAN -> IMPLEMENT -> RUN -> VERIFY -> REVIEW -> COMMIT as the working dis
 | Item | Status and treatment |
 |---|---|
 | Single-process deployment | Assumption to confirm before deployment. A single-process Node run fits; multiple workers/serverless instances need database-backed coordination. |
-| Auth.js version | Selected in Stage 3: next-auth 5.0.0-beta.32 and @auth/prisma-adapter 2.11.3, using consistent v5 APIs with Next.js 16 and Prisma 7. The release is a beta. Real login persistence and authenticated HTTP checks pass; browser logout and repeated-login verification remain pending. |
+| Auth.js version | Selected in Stage 3: next-auth 5.0.0-beta.32 and @auth/prisma-adapter 2.11.3, using consistent v5 APIs with Next.js 16 and Prisma 7. The release is a beta. Google login, persistence, logout, and repeated login were verified across Stages 3-6; Stage 12 reviewed the session boundary and preserved the current session. |
 | AI model | User-directed Gemini override: gemini-3.1-flash-lite, configured server-side with minimal thinking and a 300-token output cap. See D010. Free Tier eligibility/quotas depend on the project. No model-routing abstraction. |
 | AI timeout and retries | Gemini SDK timeout 30,000 ms and retryOptions.attempts = 1 (zero retries). |
 | Validation limits | Confirmed project decision: after trimming, minimum length = 1 and maximum length = 200. The PDF itself leaves numbers unspecified. |
-| Time measurement | Proposed decision: UTC timestamp at successful generation completion, measured with the server clock used for freshness checks. |
+| Time measurement | Implemented decision: UTC timestamp at successful generation completion, measured with the server clock used for freshness checks. |
 | Provider timeout ambiguity | A client timeout cannot prove provider-side work has stopped. Stage 9 prevents overlapping application generation within one process; it does not claim exactly-once execution inside the provider after network failures or coordination across processes. |
 | Persistence failure after generation | Do not report an unpersisted new fact as successful. Return the existing safe error, with no stale fallback for a database write failure (Stage 10 clarification, D012). |
-| Test setup budget | Cache and cross-user authorization tests remain required. A separate test database and the full list of suggested additional automated tests are optional. |
+| Test setup budget | Required cache and cross-user authorization coverage is implemented in the Node workflow suite. A separate test database remains optional; the suite does not claim live Prisma/OAuth integration coverage. |
 | Fact accuracy | Independent verification is not requested; do not add a movie database or research pipeline. |
 | Documentation length | This detailed design informs implementation; keep the README overview to the required 1-2 pages. |
 

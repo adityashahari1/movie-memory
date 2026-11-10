@@ -101,7 +101,7 @@ These are practical interpretations, **not additional requirements stated by the
 | Assumption | Reason and boundary |
 |---|---|
 | A user who has not saved a favorite movie still needs onboarding, even if their Google account already exists in the application. | The PDF does not define “first-time” or address interrupted onboarding. This interpretation keeps the required flow completable. |
-| Apply the chosen length limits to the trimmed movie value and reject whitespace-only submissions. | This gives practical meaning to “trim input, min/max length.” The actual limits remain undecided. |
+| Apply the chosen length limits to the trimmed movie value and reject whitespace-only submissions. | This gives practical meaning to “trim input, min/max length.” D004 confirms the project limits as 1-200 after trimming; the PDF itself does not supply numeric limits. |
 | Successful onboarding leads to the dashboard. | This connects the required flows, but the post-save destination is not expressly stated. |
 | When no fact exists, generate and store the initial fact. | This follows from Base fact generation; Variant A does not separately describe the empty-cache case. |
 | Failure fallback uses the latest fact for the **same authenticated user and movie**, even when stale. | This follows the cache scope established earlier in Variant A and the requirement to preserve ownership. |
